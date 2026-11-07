@@ -2,9 +2,9 @@ pipeline {
     agent any
 
     environment {
-        // Cấu hình URL Tyk Gateway theo tên miền chính thức của bạn
-        VITE_API_BASE_URL = credentials('VITE_API_BASE_URL') ?: 'https://agentshop.id.vn/api'
-        TYK_GW_SECRET     = credentials('TYK_GW_SECRET') ?: 'foo'
+        // Cấu hình URL Tyk Gateway và Secret
+        VITE_API_BASE_URL = 'https://agentshop.id.vn/api'
+        TYK_GW_SECRET     = 'foo'
     }
 
     stages {
