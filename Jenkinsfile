@@ -2,9 +2,7 @@ pipeline {
     agent any
 
     environment {
-        // Cấu hình URL Tyk Gateway và Secret
         VITE_API_BASE_URL = 'https://agentshop.id.vn/api'
-        TYK_GW_SECRET     = 'foo'
     }
 
     stages {
@@ -16,15 +14,13 @@ pipeline {
             }
         }
 
-        stage('Deploy Services') {
+        stage('Deploy Frontend') {
             steps {
-                echo "Build và Deploy Frontend + Tyk Gateway..."
+                echo "Build và Deploy Frontend..."
                 sh '''
-                    # Export biến môi trường cho Docker Compose
                     export VITE_API_BASE_URL="${VITE_API_BASE_URL}"
-                    export TYK_GW_SECRET="${TYK_GW_SECRET}"
 
-                    # Build lại frontend image và khởi động lại các container
+                    # Build lại image và cập nhật container frontend
                     docker compose down --remove-orphans || true
                     docker compose build --no-cache frontend
                     docker compose up -d --remove-orphans
@@ -35,15 +31,12 @@ pipeline {
         stage('Health Check') {
             steps {
                 echo "Đang kiểm tra tình trạng dịch vụ..."
-                sleep 5
+                sleep 3
                 sh '''
-                    # Kiểm tra Tyk Gateway (Port 8081)
-                    curl -fsS http://localhost:8081/hello || (echo "Tyk Gateway chưa sẵn sàng!" && exit 1)
-
                     # Kiểm tra Frontend (Port 3000)
                     curl -fsS http://localhost:3000 || (echo "Frontend chưa sẵn sàng!" && exit 1)
 
-                    echo "Tất cả dịch vụ đã triển khai thành công!"
+                    echo "Frontend đã triển khai thành công!"
                 '''
             }
         }
