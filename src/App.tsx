@@ -153,7 +153,7 @@ export default function App() {
       </main>
 
       <footer className="footer">
-        API key chỉ được gửi trực tiếp tới máy chủ của nhà cung cấp để tra cứu và không được lưu ở nơi khác.
+        API key chỉ được dùng để tra cứu hạn mức và không được lưu trên trình duyệt trừ khi bạn chọn ghi nhớ.
       </footer>
     </div>
   )
@@ -161,7 +161,7 @@ export default function App() {
 
 function EmptyState() {
   const items = [
-    { icon: <KeyIcon />, title: 'Dán API key', text: 'Key có dạng as_… — bạn có thể lấy trong trang đơn hàng sau khi mua.' },
+    { icon: <KeyIcon />, title: 'Dán API key', text: 'Key có dạng ak_… do quản trị viên cấp cho bạn.' },
     { icon: <ClockIcon />, title: 'Theo dõi chu kỳ', text: 'Xem thời gian đặt lại hạn mức theo chu kỳ và theo tuần.' },
     { icon: <ShieldIcon />, title: 'Hạn sử dụng key', text: 'Biết chính xác khi nào key hết hạn để gia hạn kịp thời.' },
   ]

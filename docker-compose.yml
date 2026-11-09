@@ -4,8 +4,32 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        - VITE_API_BASE_URL=${VITE_API_BASE_URL:-https://agentshop.id.vn/api}
+        - VITE_API_BASE_URL=${VITE_API_BASE_URL:-/api}
     container_name: quota-frontend
     restart: always
     ports:
-      - "3000:80"
+      - "127.0.0.1:3000:80"
+
+  gateway:
+    build: ./gateway
+    container_name: quota-gateway
+    restart: always
+    environment:
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?ADMIN_TOKEN is required (openssl rand -hex 32)}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required (openssl rand -hex 32)}
+      UPSTREAM_BASE_URL: ${UPSTREAM_BASE_URL:-https://api.agentshop247.com/api}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://agentshop.id.vn}
+      DB_PATH: /data/gateway.db
+    # Only reachable from the server itself; the public goes through nginx.
+    # 8090 instead of 8080 because Jenkins already uses 8080 on this server.
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - gateway-data:/data
+
+volumes:
+  # Keeps the key database across deploys. Never run `docker compose down -v`.
+  # Fixed name so the data survives a renamed Jenkins job or a different workspace directory
+  # (otherwise compose prefixes the volume with the project/directory name).
+  gateway-data:
+    name: quota-gateway-data

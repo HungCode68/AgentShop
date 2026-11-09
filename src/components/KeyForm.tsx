@@ -39,7 +39,7 @@ export function KeyForm({ value, onChange, onSubmit, loading, remember, onRememb
             type={visible ? 'text' : 'password'}
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            placeholder="as_xxxxxxxxxxxxxxxxxxxxxxxx"
+            placeholder="ak_xxxxxxxxxxxxxxxxxxxxxxxx"
             autoComplete="off"
             spellCheck={false}
             autoFocus

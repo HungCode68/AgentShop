@@ -1,0 +1,16 @@
+{
+  "name": "quota-gateway",
+  "private": true,
+  "version": "1.0.0",
+  "description": "API gateway: cấp key riêng cho client, xác thực và ánh xạ sang key của agentshop247",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=../.env src/index.js",
+    "dev": "node --disable-warning=ExperimentalWarning --env-file-if-exists=../.env --watch src/index.js",
+    "cli": "node --disable-warning=ExperimentalWarning --env-file-if-exists=../.env src/cli.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+  }
+}

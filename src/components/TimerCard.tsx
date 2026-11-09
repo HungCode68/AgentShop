@@ -33,9 +33,11 @@ interface Props {
   /** When known, renders a progress bar of elapsed time between `start` and `target`. */
   start?: Date | null
   note?: string
+  /** Shown when there is no target date. */
+  emptyText?: string
 }
 
-export function TimerCard({ icon, title, target, now, start, note }: Props) {
+export function TimerCard({ icon, title, target, now, start, note, emptyText = 'Không có dữ liệu' }: Props) {
   const remaining = target ? target.getTime() - now : null
   const progress =
     target && start ? Math.max(0, Math.min(100, ((now - start.getTime()) / (target.getTime() - start.getTime())) * 100)) : null
@@ -59,7 +61,7 @@ export function TimerCard({ icon, title, target, now, start, note }: Props) {
           )}
         </>
       ) : (
-        <div className="timer__countdown timer__countdown--muted">Không có dữ liệu</div>
+        <div className="timer__countdown timer__countdown--muted">{emptyText}</div>
       )}
       {note && <div className="timer__note">{note}</div>}
     </div>

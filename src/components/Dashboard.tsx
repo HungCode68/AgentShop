@@ -33,7 +33,10 @@ export function Dashboard({ data, keyInfo, now, lastChecked, loading, onRefresh,
 
   const windowEnd = parseServerDate(data.windowEnd)
   const weeklyReset = parseServerDate(data.weeklyLimitResetAt)
-  const keyExpired = keyInfo?.expiresAt ? keyInfo.expiresAt.getTime() <= now : false
+  // Through our gateway the expiry is the issued ak_ key's; calling agentshop directly it is decoded from the as_ JWT.
+  const viaGateway = data.keyExpiresAt !== undefined
+  const keyExpiry = viaGateway ? parseServerDate(data.keyExpiresAt) : (keyInfo?.expiresAt ?? null)
+  const keyExpired = keyExpiry ? keyExpiry.getTime() <= now : false
 
   return (
     <section className="results" aria-live="polite">
@@ -112,10 +115,11 @@ export function Dashboard({ data, keyInfo, now, lastChecked, loading, onRefresh,
         <TimerCard
           icon={<ShieldIcon />}
           title="Key hết hạn sau"
-          target={keyInfo?.expiresAt ?? null}
-          start={keyInfo?.issuedAt}
+          target={keyExpiry}
+          start={viaGateway ? null : keyInfo?.issuedAt}
+          emptyText={viaGateway ? 'Không thời hạn' : undefined}
           now={now}
-          note={keyInfo?.accountTime ? `Gói ${translateDuration(keyInfo.accountTime)}` : undefined}
+          note={!viaGateway && keyInfo?.accountTime ? `Gói ${translateDuration(keyInfo.accountTime)}` : data.keyName}
         />
       </div>
     </section>
