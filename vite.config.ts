@@ -6,8 +6,9 @@ export default defineConfig({
   server: {
     port: 5173,
     // Dev: forward /api to the local gateway (cd gateway && npm start), same as nginx does in production.
+    // GATEWAY_URL overrides the target, e.g. when a second gateway runs on another port.
     proxy: {
-      '/api': 'http://localhost:8090',
+      '/api': process.env.GATEWAY_URL || 'http://localhost:8090',
     },
   },
 })

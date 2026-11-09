@@ -5,13 +5,16 @@ import './styles.css'
 
 // /admin opens the key management page. Nothing links to it; it is loaded on demand so the quota page stays small.
 const AdminApp = lazy(() => import('./admin/AdminApp'))
-const isAdmin = /^\/admin\/?$/.test(window.location.pathname)
+// /huong-dan is the step-by-step Chatbox setup guide, also loaded on demand.
+const GuidePage = lazy(() => import('./guide/GuidePage'))
+const path = window.location.pathname
+const Page = /^\/admin\/?$/.test(path) ? AdminApp : /^\/huong-dan\/?$/.test(path) ? GuidePage : null
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {isAdmin ? (
+    {Page ? (
       <Suspense fallback={null}>
-        <AdminApp />
+        <Page />
       </Suspense>
     ) : (
       <App />

@@ -1,3 +1,7 @@
+import { copyText } from '../lib/clipboard'
+
+export { copyText }
+
 const shortFmt = new Intl.DateTimeFormat('vi-VN', {
   day: '2-digit',
   month: '2-digit',
@@ -86,22 +90,4 @@ export async function copyLater(text: Promise<string>): Promise<void> {
     }
   }
   if (!(await copyText(await text))) throw new Error('Trình duyệt không cho phép sao chép. Hãy thử lại.')
-}
-
-export async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text)
-    return true
-  } catch {
-    // Fallback for non-secure contexts (plain http).
-    const ta = document.createElement('textarea')
-    ta.value = text
-    ta.style.position = 'fixed'
-    ta.style.opacity = '0'
-    document.body.appendChild(ta)
-    ta.select()
-    const ok = document.execCommand('copy')
-    ta.remove()
-    return ok
-  }
 }

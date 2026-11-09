@@ -15,6 +15,9 @@ const ENC_KEY = parseEncryptionKey('11'.repeat(32))
 const ADMIN_TOKEN = 'admin-token-for-tests-0123456789'
 const UPSTREAM_GOOD = 'as_good_upstream_key_123'
 const UPSTREAM_OTHER = 'as_other_upstream_key_456'
+// Same shape as real agentshop keys: as_<JWT> whose payload has the plan length and expiry.
+const jwtPart = (o) => Buffer.from(JSON.stringify(o)).toString('base64url')
+const UPSTREAM_JWT = `as_${jwtPart({ alg: 'HS512' })}.${jwtPart({ sub: 'u1', productId: 7, accountTime: '30 days', iat: 1893456000, exp: 1896048000 })}.signature`
 
 /** Fake agentshop247: records what it received so tests can assert on the forwarded request. */
 let received = []
@@ -26,7 +29,7 @@ const upstream = createServer(async (req, res) => {
   received.push({ method: req.method, path: url.pathname, search: url.search, headers: req.headers, body })
 
   if (url.pathname === '/api/proxy/check-usage') {
-    const ok = url.searchParams.get('key') === UPSTREAM_GOOD
+    const ok = [UPSTREAM_GOOD, UPSTREAM_JWT].includes(url.searchParams.get('key'))
     res.writeHead(200, { 'content-type': 'application/json' })
     return res.end(
       JSON.stringify(
@@ -51,11 +54,12 @@ const upstream = createServer(async (req, res) => {
 let gateway
 let base
 let store
+let config
 
 before(async () => {
   upstream.listen(0)
   await once(upstream, 'listening')
-  const config = {
+  config = {
     port: 0,
     adminToken: ADMIN_TOKEN,
     encryptionKey: ENC_KEY,
@@ -111,6 +115,17 @@ describe('check-usage', () => {
     assert.equal(body.data.keyExpiresAt, '2030-01-01T00:00:00.000Z')
     assert.equal(received[0].search, `?key=${UPSTREAM_GOOD}`)
     assert.equal(res.headers.get('access-control-allow-origin'), '*')
+    assert.equal(body.data.upstreamExpiresAt, null, 'non-JWT upstream key has no decodable expiry')
+  })
+
+  test('adds the agentshop key expiry decoded from its JWT', async () => {
+    const { key } = store.create({ name: 'J', upstreamKey: UPSTREAM_JWT })
+    const body = await (await fetch(`${base}/api/proxy/check-usage?key=${key}`)).json()
+    assert.equal(body.success, true)
+    assert.equal(body.data.keyExpiresAt, null)
+    assert.equal(body.data.upstreamExpiresAt, '2030-01-31T00:00:00.000Z')
+    assert.equal(body.data.upstreamIssuedAt, '2030-01-01T00:00:00.000Z')
+    assert.equal(body.data.upstreamPlan, '30 days')
   })
 
   test('rejects unknown, revoked, expired and unassigned keys without calling upstream', async () => {
@@ -305,5 +320,83 @@ describe('database migration', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('unreliable connection to agentshop', () => {
+  /** What Node's fetch throws when the connection could not be opened (the request never left). */
+  const connectError = (code) => Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error(code), { code }) })
+  const failWith = (code) => () => Promise.reject(connectError(code))
+  /** An attempt that never answers until the gateway aborts it. */
+  const hang = (_url, init) => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)))
+
+  /** Runs a second gateway whose first fetch calls behave as given, then fall through to the fake agentshop. */
+  async function withFlakyUpstream(failures, fn, extraConfig = {}) {
+    let calls = 0
+    const fetchImpl = (url, init) => (failures[calls++] ?? fetch)(url, init)
+    const gw = createGateway({ config: { ...config, ...extraConfig }, store, fetchImpl, log: () => {} })
+    gw.listen(0)
+    await once(gw, 'listening')
+    try {
+      return await fn(`http://127.0.0.1:${gw.address().port}`, () => calls)
+    } finally {
+      gw.close()
+    }
+  }
+
+  test('check-usage retries when the connection cannot be opened', async () => {
+    const { key } = store.create({ name: 'C', upstreamKey: UPSTREAM_GOOD })
+    await withFlakyUpstream([failWith('UND_ERR_CONNECT_TIMEOUT')], async (gw, calls) => {
+      const res = await fetch(`${gw}/api/proxy/check-usage?key=${key}`)
+      assert.equal(res.status, 200)
+      assert.equal((await res.json()).data.tokensUsed, 100)
+      assert.equal(calls(), 2)
+    })
+  })
+
+  test('check-usage abandons a hung attempt early and retries', async () => {
+    const { key } = store.create({ name: 'H', upstreamKey: UPSTREAM_GOOD })
+    await withFlakyUpstream(
+      [hang],
+      async (gw, calls) => {
+        const started = Date.now()
+        const res = await fetch(`${gw}/api/proxy/check-usage?key=${key}`)
+        assert.equal(res.status, 200)
+        assert.equal(calls(), 2)
+        assert.ok(Date.now() - started < 1500, 'did not wait for the full timeout')
+      },
+      { checkUsageTimeoutsMs: [100, 2000] },
+    )
+  })
+
+  test('check-usage still answers 502 once every attempt failed', async () => {
+    const { key } = store.create({ name: 'F', upstreamKey: UPSTREAM_GOOD })
+    const fail = failWith('EAI_AGAIN')
+    await withFlakyUpstream([fail, fail, fail, fail], async (gw, calls) => {
+      const res = await fetch(`${gw}/api/proxy/check-usage?key=${key}`)
+      assert.equal(res.status, 502)
+      assert.equal((await res.json()).message, 'Upstream service is unreachable.')
+      assert.equal(calls(), 2)
+    })
+  })
+
+  test('AI requests are resent when the connection could not be opened', async () => {
+    const { key } = store.create({ name: 'P', upstreamKey: UPSTREAM_GOOD })
+    await withFlakyUpstream([failWith('UND_ERR_CONNECT_TIMEOUT')], async (gw, calls) => {
+      const res = await fetch(`${gw}/api/proxy/v1/messages`, { method: 'POST', headers: { 'x-api-key': key }, body: '{"model":"m"}' })
+      assert.equal(res.status, 201)
+      assert.equal(calls(), 2)
+      assert.equal(received.length, 1)
+      assert.equal(received[0].body, '{"model":"m"}')
+    })
+  })
+
+  test('AI requests are not resent when they may already have reached agentshop', async () => {
+    const { key } = store.create({ name: 'N', upstreamKey: UPSTREAM_GOOD })
+    await withFlakyUpstream([failWith('ECONNRESET')], async (gw, calls) => {
+      const res = await fetch(`${gw}/api/proxy/v1/messages`, { method: 'POST', headers: { 'x-api-key': key }, body: '{}' })
+      assert.equal(res.status, 502)
+      assert.equal(calls(), 1)
+    })
   })
 })

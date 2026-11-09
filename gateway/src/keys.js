@@ -46,6 +46,27 @@ function normExpiresAt(v) {
   return d.toISOString()
 }
 
+/**
+ * agentshop keys look like `as_<JWT>`; the payload carries the plan length and expiry.
+ * Read for display only: the signature is agentshop's and is not verified here.
+ * @returns {{expiresAt: string|null, issuedAt: string|null, plan: string|null} | null}
+ */
+export function decodeUpstreamKey(key) {
+  const parts = String(key ?? '').replace(/^as_/, '').split('.')
+  if (parts.length !== 3) return null
+  try {
+    const p = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'))
+    const date = (s) => (Number.isFinite(s) ? new Date(s * 1000).toISOString() : null)
+    return {
+      expiresAt: date(p.exp),
+      issuedAt: date(p.iat),
+      plan: typeof p.accountTime === 'string' ? p.accountTime : null,
+    }
+  } catch {
+    return null
+  }
+}
+
 function effectiveStatus(row, now = Date.now()) {
   if (row.status === 'revoked') return 'revoked'
   if (row.expires_at && Date.parse(row.expires_at) <= now) return 'expired'

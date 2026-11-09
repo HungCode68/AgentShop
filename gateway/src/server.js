@@ -9,7 +9,7 @@ import { handleAiProxy, handleCheckUsage } from './proxy.js'
  *          fetchImpl?: typeof fetch, log?: (line: string) => void}} deps
  */
 export function createGateway({ config, store, fetchImpl = fetch, log = (line) => console.log(line) }) {
-  const ctx = { config, store, fetchImpl }
+  const ctx = { config, store, fetchImpl, log }
 
   return createServer(async (req, res) => {
     const started = Date.now()

@@ -80,6 +80,15 @@ curl -s -X DELETE -H "Authorization: Bearer $T" http://127.0.0.1:8090/api/admin/
 
 Trường của PATCH: `name`, `note`, `upstreamKey` (`null` = bỏ gán), `expiresAt` (`null` = không thời hạn), `status` (`active` | `revoked`).
 
+## Kết nối tới agentshop chập chờn
+
+Thỉnh thoảng server mở kết nối mới tới agentshop bị treo (DNS hoặc TCP), và `fetch` của Node chỉ bỏ cuộc sau 10 giây. Lần gọi đầu tiên sau một lúc không dùng luôn phải mở kết nối mới, nên lỗi hay rơi vào lúc đó (trước đây biểu hiện là `502 ~10500ms` trong log). Gateway tự xử lý:
+
+- **check-usage** (và xem usage trong /admin): lần thử đầu chờ tối đa 4 giây, nếu lỗi thì thử lại một lần với tối đa 8 giây.
+- **Request AI** (`/api/proxy/v1/*`): chỉ gửi lại một lần, và chỉ khi chắc chắn chưa mở được kết nối (`UND_ERR_CONNECT_TIMEOUT`, `ECONNREFUSED`, `ENOTFOUND`, `EAI_AGAIN`...). Nhờ vậy agentshop không thể nhận và tính phí hai lần. Lỗi xảy ra sau khi đã gửi (ví dụ `ECONNRESET`) thì không gửi lại.
+
+Mỗi lần thử thất bại được ghi một dòng `WARN ... upstream attempt 1/2 failed: TypeError: <mã lỗi>`. Xem bằng lệnh `docker logs quota-gateway 2>&1 | grep WARN`.
+
 ## Bảo mật
 
 - Key `ak_` được tra cứu qua bản băm SHA-256, và lưu thêm một bản mã hoá AES-256-GCM để admin sao chép lại được (nút sao chép trên trang `/admin`, `GET /api/admin/keys/:id/key` hoặc lệnh `reveal`). Key tạo trước khi có tính năng này không sao chép được, cần cấp lại (rotate) một lần.

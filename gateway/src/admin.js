@@ -13,7 +13,7 @@ import { fetchUpstreamUsage } from './proxy.js'
  *   GET    /api/admin/keys/:id/key      the full client key, to copy it again
  *   DELETE /api/admin/keys/:id          delete
  */
-export async function handleAdmin(req, res, url, { store, config, fetchImpl }) {
+export async function handleAdmin(req, res, url, { store, config, fetchImpl, log }) {
   // Responses carry key material (new keys) — never let a browser or proxy cache them.
   res.setHeader('cache-control', 'no-store')
 
@@ -56,7 +56,7 @@ export async function handleAdmin(req, res, url, { store, config, fetchImpl }) {
       if (method !== 'GET') return notAllowed()
       const upstreamKey = store.upstreamKeyOf(id)
       if (!upstreamKey) return sendJson(res, 409, { error: 'Key is not linked to an upstream account yet.' })
-      const usage = await fetchUpstreamUsage(upstreamKey, { config, fetchImpl })
+      const usage = await fetchUpstreamUsage(upstreamKey, { config, fetchImpl, log })
       if (!usage.ok) return sendJson(res, 502, { error: usage.message })
       return sendJson(res, 200, { usage: usage.data })
     }

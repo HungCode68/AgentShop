@@ -2,38 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Dashboard } from './components/Dashboard'
 import { AlertIcon, ClockIcon, KeyIcon, ShieldIcon } from './components/Icons'
 import { KeyForm } from './components/KeyForm'
+import { Topbar } from './components/Topbar'
 import { ApiError, checkUsage, type UsageData } from './lib/api'
 import { decodeKey } from './lib/keyInfo'
+import { savedKey } from './lib/savedKey'
 
-const STORAGE_KEY = 'quota-monitor:key'
 const AUTO_REFRESH_MS = 60_000
-
-const storage = {
-  get: () => {
-    try {
-      return localStorage.getItem(STORAGE_KEY)
-    } catch {
-      return null
-    }
-  },
-  set: (v: string | null) => {
-    try {
-      if (v) localStorage.setItem(STORAGE_KEY, v)
-      else localStorage.removeItem(STORAGE_KEY)
-    } catch {
-      /* storage unavailable */
-    }
-  },
-}
 
 function initialKey(): string {
   const fromUrl = new URLSearchParams(window.location.search).get('key')
-  return fromUrl?.trim() || storage.get() || ''
+  return fromUrl?.trim() || savedKey.get() || ''
 }
 
 export default function App() {
   const [apiKey, setApiKey] = useState(initialKey)
-  const [remember, setRemember] = useState(() => !!storage.get())
+  const [remember, setRemember] = useState(() => !!savedKey.get())
   const [checkedKey, setCheckedKey] = useState<string | null>(null)
   const [data, setData] = useState<UsageData | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -59,7 +42,7 @@ export default function App() {
         setData(result)
         setCheckedKey(key)
         setLastChecked(new Date())
-        storage.set(remember ? key : null)
+        savedKey.set(remember ? key : null)
       } catch (err) {
         if ((err as Error).name === 'AbortError') return
         setError(err instanceof ApiError ? err.message : 'Đã xảy ra lỗi không xác định.')
@@ -88,24 +71,16 @@ export default function App() {
 
   const handleRemember = (v: boolean) => {
     setRemember(v)
-    storage.set(v && checkedKey ? checkedKey : null)
+    savedKey.set(v && checkedKey ? checkedKey : null)
   }
 
   return (
     <div className="app">
       <div className="bg-glow" aria-hidden />
-      <header className="topbar">
-        <div className="brand">
-          <span className="brand__mark" aria-hidden>
-            <svg viewBox="0 0 32 32" width="18" height="18">
-              <path d="M16 6a10 10 0 1 0 10 10" stroke="currentColor" strokeWidth="3.2" fill="none" strokeLinecap="round" />
-              <circle cx="16" cy="16" r="3" fill="currentColor" />
-            </svg>
-          </span>
-          <span className="brand__name">Quota Monitor</span>
-        </div>
+      <Topbar>
         <span className="topbar__tag">AI Usage Dashboard</span>
-      </header>
+        <a className="btn btn--ghost" href="/huong-dan">Hướng dẫn dùng với Chatbox</a>
+      </Topbar>
 
       <main className="container">
         <section className="hero">

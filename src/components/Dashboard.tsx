@@ -33,9 +33,8 @@ export function Dashboard({ data, keyInfo, now, lastChecked, loading, onRefresh,
 
   const windowEnd = parseServerDate(data.windowEnd)
   const weeklyReset = parseServerDate(data.weeklyLimitResetAt)
-  // Through our gateway the expiry is the issued ak_ key's; calling agentshop directly it is decoded from the as_ JWT.
-  const viaGateway = data.keyExpiresAt !== undefined
-  const keyExpiry = viaGateway ? parseServerDate(data.keyExpiresAt) : (keyInfo?.expiresAt ?? null)
+  const expiry = keyExpiryInfo(data, keyInfo)
+  const keyExpiry = expiry.target
   const keyExpired = keyExpiry ? keyExpiry.getTime() <= now : false
 
   return (
@@ -116,12 +115,39 @@ export function Dashboard({ data, keyInfo, now, lastChecked, loading, onRefresh,
           icon={<ShieldIcon />}
           title="Key hết hạn sau"
           target={keyExpiry}
-          start={viaGateway ? null : keyInfo?.issuedAt}
-          emptyText={viaGateway ? 'Không thời hạn' : undefined}
+          start={expiry.start}
+          emptyText={expiry.viaGateway ? 'Không thời hạn' : undefined}
           now={now}
-          note={!viaGateway && keyInfo?.accountTime ? `Gói ${translateDuration(keyInfo.accountTime)}` : data.keyName}
+          note={expiry.note}
         />
       </div>
     </section>
   )
+}
+
+/**
+ * Through our gateway the client's key stops working at whichever comes first: the ak_ expiry set by the
+ * admin, or the agentshop key's own expiry (decoded server-side from its JWT). Calling agentshop directly,
+ * the as_ JWT is decoded in the browser instead.
+ */
+function keyExpiryInfo(data: UsageData, keyInfo: KeyInfo | null) {
+  const viaGateway = data.keyExpiresAt !== undefined
+  if (!viaGateway) {
+    return {
+      viaGateway,
+      target: keyInfo?.expiresAt ?? null,
+      start: keyInfo?.issuedAt ?? null,
+      note: keyInfo?.accountTime ? `Gói ${translateDuration(keyInfo.accountTime)}` : undefined,
+    }
+  }
+  const own = parseServerDate(data.keyExpiresAt)
+  const upstream = parseServerDate(data.upstreamExpiresAt)
+  const upstreamFirst = upstream !== null && (own === null || upstream.getTime() <= own.getTime())
+  const plan = data.upstreamPlan ? `Gói ${translateDuration(data.upstreamPlan)}` : undefined
+  return {
+    viaGateway,
+    target: upstreamFirst ? upstream : own,
+    start: upstreamFirst ? parseServerDate(data.upstreamIssuedAt) : null,
+    note: [data.keyName, plan].filter(Boolean).join(' · ') || undefined,
+  }
 }

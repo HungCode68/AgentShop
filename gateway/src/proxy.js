@@ -1,6 +1,7 @@
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { readBody, sendJson } from './http.js'
+import { decodeUpstreamKey } from './keys.js'
 
 /** Why a client key was rejected → [HTTP status, Anthropic error type, message]. */
 const REJECTIONS = {
@@ -40,20 +41,36 @@ function extractClientKey(req) {
   return null
 }
 
+// Opening a new connection to agentshop occasionally stalls on the server (DNS or TCP), and Node's fetch only
+// gives up after 10s. The first request after a quiet spell opens a new connection, so that is when it shows.
+// check-usage: each attempt gets its own short timeout and the read-only GET is simply retried.
+const CHECK_USAGE_TIMEOUTS_MS = [4_000, 8_000]
+// AI requests: resent once, but only when the connection was never opened, so agentshop cannot have seen
+// (and billed) the first attempt. A reset after sending is not retried.
+const AI_ATTEMPTS = 2
+const NOT_SENT = new Set(['UND_ERR_CONNECT_TIMEOUT', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH'])
+
+const causeCode = (err) => err?.cause?.code ?? err?.code
+const describeError = (err) => `${err?.name ?? 'Error'}: ${causeCode(err) ?? err?.message ?? err}`
+const warn = (log, msg) => log?.(`${new Date().toISOString()} WARN ${msg}`)
+
 /**
  * Calls the provider's check-usage endpoint with an upstream key.
  * @returns {Promise<{ok: true, data: object} | {ok: false, message: string}>}
  */
-export async function fetchUpstreamUsage(upstreamKey, { config, fetchImpl }) {
+export async function fetchUpstreamUsage(upstreamKey, { config, fetchImpl, log }) {
+  const url = `${config.upstreamBaseUrl}/proxy/check-usage?key=${encodeURIComponent(upstreamKey)}`
+  const timeouts = config.checkUsageTimeoutsMs ?? CHECK_USAGE_TIMEOUTS_MS
   let body
-  try {
-    const upstream = await fetchImpl(`${config.upstreamBaseUrl}/proxy/check-usage?key=${encodeURIComponent(upstreamKey)}`, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(15_000),
-    })
-    body = await upstream.json()
-  } catch {
-    return { ok: false, message: UPSTREAM_DOWN }
+  for (const [i, ms] of timeouts.entries()) {
+    try {
+      const upstream = await fetchImpl(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(ms) })
+      body = await upstream.json()
+      break
+    } catch (err) {
+      warn(log, `check-usage upstream attempt ${i + 1}/${timeouts.length} failed: ${describeError(err)}`)
+      if (i === timeouts.length - 1) return { ok: false, message: UPSTREAM_DOWN }
+    }
   }
   if (!body?.success || !body.data) return { ok: false, message: UPSTREAM_INVALID }
   return { ok: true, data: body.data }
@@ -61,9 +78,10 @@ export async function fetchUpstreamUsage(upstreamKey, { config, fetchImpl }) {
 
 /**
  * GET /api/proxy/check-usage?key=<client key>
- * Looks up the mapped upstream key and returns the provider's usage data plus the client key's own expiry.
+ * Looks up the mapped upstream key and returns the provider's usage data plus both expiries:
+ * the client key's own (set by the admin) and the agentshop key's (decoded from its JWT).
  */
-export async function handleCheckUsage(req, res, url, { store, config, fetchImpl }) {
+export async function handleCheckUsage(req, res, url, { store, config, fetchImpl, log }) {
   const envelope = (status, message, data = null) => sendJson(res, status, { success: data !== null, message, data })
 
   const clientKey = url.searchParams.get('key')?.trim()
@@ -76,13 +94,18 @@ export async function handleCheckUsage(req, res, url, { store, config, fetchImpl
   }
   res.keyId = resolved.record.id
 
-  const usage = await fetchUpstreamUsage(resolved.upstreamKey, { config, fetchImpl })
+  const usage = await fetchUpstreamUsage(resolved.upstreamKey, { config, fetchImpl, log })
   if (!usage.ok) return envelope(502, usage.message)
 
+  const upstream = decodeUpstreamKey(resolved.upstreamKey)
   return envelope(200, 'Success', {
     ...usage.data,
     keyName: resolved.record.name,
     keyExpiresAt: resolved.record.expiresAt,
+    // From the mapped agentshop key itself (its check-usage response has no expiry field).
+    upstreamExpiresAt: upstream?.expiresAt ?? null,
+    upstreamIssuedAt: upstream?.issuedAt ?? null,
+    upstreamPlan: upstream?.plan ?? null,
   })
 }
 
@@ -90,7 +113,7 @@ export async function handleCheckUsage(req, res, url, { store, config, fetchImpl
  * Any other /api/proxy/* request (e.g. POST /api/proxy/v1/messages from Claude Code):
  * swap the client key for the upstream key and stream the provider's response back unchanged.
  */
-export async function handleAiProxy(req, res, url, { store, config, fetchImpl }) {
+export async function handleAiProxy(req, res, url, { store, config, fetchImpl, log }) {
   const found = extractClientKey(req)
   const resolved = found ? store.resolve(found.key) : { ok: false, reason: 'missing' }
   if (!resolved.ok) {
@@ -119,11 +142,15 @@ export async function handleAiProxy(req, res, url, { store, config, fetchImpl })
   })
 
   let upstream
-  try {
-    upstream = await fetchImpl(target, { method: req.method, headers, body, signal: abort.signal, redirect: 'manual' })
-  } catch {
-    if (abort.signal.aborted) return
-    return anthropicError(res, 502, 'api_error', UPSTREAM_DOWN)
+  for (let attempt = 1; !upstream; attempt++) {
+    try {
+      upstream = await fetchImpl(target, { method: req.method, headers, body, signal: abort.signal, redirect: 'manual' })
+    } catch (err) {
+      if (abort.signal.aborted) return
+      const retry = attempt < AI_ATTEMPTS && NOT_SENT.has(causeCode(err))
+      warn(log, `${req.method} ${url.pathname} upstream attempt ${attempt}/${AI_ATTEMPTS} failed: ${describeError(err)}${retry ? ', retrying' : ''}`)
+      if (!retry) return anthropicError(res, 502, 'api_error', UPSTREAM_DOWN)
+    }
   }
 
   const outHeaders = {}

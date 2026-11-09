@@ -68,13 +68,13 @@ Bấm **Build Now**. Jenkins sẽ:
 Sau lần build đầu, code đã nằm trong workspace của Jenkins. SSH vào server rồi chạy (thay `quota-monitor-deploy` bằng tên job của bạn):
 
 ```bash
-WS=/var/lib/jenkins/workspace/quota-monitor-deploy
+WS="/var/lib/jenkins/workspace/quota-monitor-deploy"   # giữ dấu nháy: tên job có thể có dấu cách, vd "Agent Shop"
 
 # 1. Sao lưu cấu hình đang chạy
 sudo cp /etc/nginx/sites-available/jenkins ~/nginx-jenkins.manual.bak
 
 # 2. Cài script cập nhật (root sở hữu, Jenkins không sửa được)
-sudo install -o root -g root -m 755 $WS/deploy/update-nginx.sh /usr/local/bin/update-nginx-agentshop
+sudo install -o root -g root -m 755 "$WS/deploy/update-nginx.sh" /usr/local/bin/update-nginx-agentshop
 
 # 3. Cho user jenkins chạy đúng script đó bằng sudo, không kèm tham số
 echo 'jenkins ALL=(root) NOPASSWD: /usr/local/bin/update-nginx-agentshop ""' | sudo tee /etc/sudoers.d/jenkins-nginx
@@ -82,7 +82,7 @@ sudo chmod 440 /etc/sudoers.d/jenkins-nginx
 sudo visudo -cf /etc/sudoers.d/jenkins-nginx     # phải in ra "parsed OK"
 
 # 4. Áp dụng ngay lần đầu (hoặc bấm Build Now lại)
-sudo /usr/local/bin/update-nginx-agentshop < $WS/nginx.conf
+sudo /usr/local/bin/update-nginx-agentshop < "$WS/nginx.conf"
 ```
 
 Từ đây, mỗi lần build Jenkins sẽ tự làm việc này: chép [nginx.conf](nginx.conf) lên server, chạy `nginx -t`, đúng thì reload, sai thì khôi phục bản cũ và báo build thất bại (Nginx vẫn chạy với cấu hình cũ). Bản trước lần cập nhật gần nhất được lưu ở `/etc/nginx/jenkins.bak`.

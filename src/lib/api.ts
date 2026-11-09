@@ -11,6 +11,10 @@ export interface UsageData {
   keyName?: string
   /** Added by our gateway: expiry of the issued key (ISO, null = never). Absent when calling agentshop directly. */
   keyExpiresAt?: string | null
+  /** Added by our gateway: expiry, issue time and plan length decoded from the mapped agentshop key (null = unknown). */
+  upstreamExpiresAt?: string | null
+  upstreamIssuedAt?: string | null
+  upstreamPlan?: string | null
 }
 
 interface ApiEnvelope {
