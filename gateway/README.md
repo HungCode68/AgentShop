@@ -16,7 +16,7 @@ Không có thư viện ngoài: chỉ dùng `node:http`, `fetch` và `node:sqlite
 | --- | --- |
 | `GET /api/proxy/check-usage?key=ak_…` | Kiểm tra hạn mức (trang frontend dùng) |
 | `* /api/proxy/*` | Proxy AI tương thích Anthropic, ví dụ `POST /api/proxy/v1/messages`. Key nhận qua `x-api-key` hoặc `Authorization: Bearer` và được chuyển tiếp bằng đúng header đó. |
-| `GET /api/setup?os=windows\|mac\|linux&key=ak_…` | Script cài nhanh Claude Code cho client (xem bên dưới) |
+| `GET /api/setup/<windows\|mac\|linux>/ak_…` | Script cài nhanh Claude Code cho client (xem bên dưới). Dạng cũ `?os=…&key=…` vẫn dùng được. |
 | `/api/admin/keys…` | API quản trị, dùng bởi trang `/admin` của frontend (cần `Authorization: Bearer $ADMIN_TOKEN`) |
 | `GET /healthz` | Health check |
 
@@ -25,14 +25,16 @@ Không có thư viện ngoài: chỉ dùng `node:http`, `fetch` và `node:sqlite
 Trang `/huong-dan` có sẵn 3 lệnh này (tự điền key khi trang biết key của khách):
 
 ```powershell
-# Windows (PowerShell 5.1 trở lên)
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm 'https://agentshop.id.vn/api/setup?os=windows&key=ak_xxx' | iex"
+# Windows: chạy trong PowerShell (không phải cmd)
+irm https://agentshop.id.vn/api/setup/windows/ak_xxx | iex
 ```
 
 ```bash
 # macOS / Linux
-curl -fsSL 'https://agentshop.id.vn/api/setup?os=mac&key=ak_xxx' | bash
+curl -fsSL https://agentshop.id.vn/api/setup/mac/ak_xxx | bash
 ```
+
+Lệnh cố ý không có dấu nháy, `?` hay `&`. Dạng cũ `powershell -Command "irm '…?os=windows&key=…' | iex"` từng hỏng trên một số máy Windows: `| iex` rơi ra ngoài dấu nháy, nên cửa sổ PowerShell ngoài đem thông báo lỗi ra chạy từng dòng (dấu hiệu: hiện hướng dẫn của lệnh `AT`).
 
 Script ([src/setup.js](src/setup.js)) làm lần lượt:
 
@@ -45,7 +47,7 @@ Ghi config theo kiểu gộp: giữ nguyên các setting khác, đọc được 
 
 Model ghim sẵn vì model mặc định của Claude Code có thể không nằm trong danh sách agentshop hỗ trợ (bị 400 rồi retry, khách thấy "rất chậm"). Khách vẫn đổi model bằng `/model` bình thường.
 
-Key nằm trong URL nên: khách chỉ nên chạy lệnh trên máy của mình, và log của gateway chỉ ghi đường dẫn, không ghi query string. Key không hợp lệ/thu hồi/hết hạn bị từ chối giống check-usage.
+Key nằm trong URL nên khách chỉ nên chạy lệnh trên máy của mình. Log của gateway không ghi query string, và với `/api/setup/<os>/<key>` thì phần key được che thành `***`. Key không hợp lệ/thu hồi/hết hạn bị từ chối giống check-usage.
 
 Cấu hình thủ công (nếu không dùng script):
 

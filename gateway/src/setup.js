@@ -16,7 +16,9 @@ const REASON_MESSAGE = {
 }
 
 /**
- * GET /api/setup?key=<ak_...>&os=windows|mac|linux
+ * GET /api/setup/<os>/<ak_...>          (preferred: nothing in the URL needs quoting)
+ * GET /api/setup?os=<os>&key=<ak_...>   (older form, still accepted)
+ * os = windows | mac | linux
  *
  * Returns a one-liner install script (text/plain, attachment) that installs the Claude Code
  * CLI and the VS Code extension and writes this gateway's base URL + key into both
@@ -27,16 +29,27 @@ const REASON_MESSAGE = {
  * active and linked to an upstream account.
  *
  * Runners:
- *   Windows: powershell -NoProfile -Command "irm '<url>' | iex"
- *   macOS/Linux: curl -fsSL '<url>' | bash
+ *   Windows (PowerShell): irm https://<host>/api/setup/windows/<key> | iex
+ *   macOS/Linux:          curl -fsSL https://<host>/api/setup/mac/<key> | bash
+ * The path form exists because "?" and "&" plus nested quotes broke the one-liner on some
+ * Windows shells. Request logs mask the key segment (see maskSetupPath).
  */
+const SETUP_PATH = /^\/api\/setup\/([^/]+)\/([^/]+)\/?$/
+
+/** True for /api/setup and /api/setup/<os>/<key>. */
+export const isSetupPath = (path) => path === '/api/setup' || path === '/api/setup/' || path.startsWith('/api/setup/')
+
+/** The request path with the key segment hidden, for logs. */
+export const maskSetupPath = (path) => path.replace(/^(\/api\/setup\/[^/]+\/)[^/]+/, '$1***')
+
 export function handleSetup(req, res, url, { store, config }) {
   if (req.method !== 'GET') return sendJson(res, 405, { success: false, message: 'Method not allowed', data: null })
 
-  const key = (url.searchParams.get('key') ?? '').trim()
+  const [, pathOs, pathKey] = SETUP_PATH.exec(url.pathname) ?? []
+  const key = (pathKey ?? url.searchParams.get('key') ?? '').trim()
   if (!key) return sendJson(res, 400, { success: false, message: 'API key is missing.', data: null })
 
-  const os = (url.searchParams.get('os') ?? '').toLowerCase()
+  const os = (pathOs ?? url.searchParams.get('os') ?? '').toLowerCase()
   if (!['windows', 'mac', 'linux'].includes(os)) {
     return sendJson(res, 400, { success: false, message: 'os must be one of: windows, mac, linux.', data: null })
   }

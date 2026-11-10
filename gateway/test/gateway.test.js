@@ -540,4 +540,30 @@ describe('setup endpoint', () => {
     const { key } = store.create({ name: 'A', upstreamKey: UPSTREAM_GOOD })
     assert.equal((await fetch(`${base}/api/setup?key=${key}&os=mac`, { method: 'POST' })).status, 405)
   })
+
+  test('path form /api/setup/<os>/<key> works and the key never reaches the log', async () => {
+    const lines = []
+    const gw = createGateway({ config, store, log: (l) => lines.push(l) })
+    gw.listen(0)
+    await once(gw, 'listening')
+    try {
+      const { key } = store.create({ name: 'P', upstreamKey: UPSTREAM_GOOD })
+      const gwBase = `http://127.0.0.1:${gw.address().port}`
+      const win = await fetch(`${gwBase}/api/setup/windows/${key}`)
+      assert.equal(win.status, 200)
+      assert.ok((await win.text()).includes(`$ApiKey = '${key}'`))
+      const mac = await fetch(`${gwBase}/api/setup/mac/${key}/`)
+      assert.equal(mac.status, 200)
+      assert.match(await mac.text(), /^#!\/usr\/bin\/env bash/)
+      assert.equal((await fetch(`${gwBase}/api/setup/android/${key}`)).status, 400)
+      assert.equal((await fetch(`${gwBase}/api/setup/windows/ak_nope`)).status, 401)
+      assert.equal((await fetch(`${gwBase}/api/setup/windows/${key}/extra`)).status, 400)
+
+      await new Promise((r) => setTimeout(r, 20)) // 'finish' handlers log after the response
+      assert.ok(lines.some((l) => l.includes('GET /api/setup/windows/*** 200')), lines.join('\n'))
+      assert.ok(lines.every((l) => !l.includes(key) && !l.includes('ak_nope')), 'no key in any log line')
+    } finally {
+      gw.close()
+    }
+  })
 })

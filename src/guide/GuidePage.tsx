@@ -11,11 +11,14 @@ const SETUP_URL = new URL(`${API_BASE}/setup`, window.location.origin).href
 const DOWNLOAD_URL = 'https://chatboxai.app'
 const KEY_PLACEHOLDER = 'KEY_CUA_BAN'
 
-/** One-line installers served by the gateway (GET /api/setup?os=…&key=…). */
+/**
+ * One-line installers served by the gateway (GET /api/setup/<os>/<key>). Deliberately free of
+ * quotes, "?" and "&": the earlier nested-quote form broke on some Windows shells.
+ */
 const setupCommands = (key: string) => ({
-  windows: `powershell -NoProfile -ExecutionPolicy Bypass -Command "irm '${SETUP_URL}?os=windows&key=${key}' | iex"`,
-  mac: `curl -fsSL '${SETUP_URL}?os=mac&key=${key}' | bash`,
-  linux: `curl -fsSL '${SETUP_URL}?os=linux&key=${key}' | bash`,
+  windows: `irm ${SETUP_URL}/windows/${key} | iex`,
+  mac: `curl -fsSL ${SETUP_URL}/mac/${key} | bash`,
+  linux: `curl -fsSL ${SETUP_URL}/linux/${key} | bash`,
 })
 
 /** The user's own key, when the quota page remembered it or the link carried ?key=. */
@@ -73,6 +76,9 @@ function QuickSetup({ keyValue }: { keyValue: string | null }) {
       <p className="small muted">
         Lệnh tự cài Claude Code (CLI + extension VS Code) và ghi sẵn API Host, key, model vào cấu hình. Setting cũ của bạn được giữ nguyên
         (có bản sao lưu <span className="mono">.agentshop-backup</span>). Chạy xong, trong VS Code bấm <b>Developer: Reload Window</b>.
+      </p>
+      <p className="small muted">
+        Windows: bấm Start, gõ <b>PowerShell</b>, mở lên rồi dán lệnh dưới đây (không dán vào cmd). macOS / Linux: dán vào Terminal.
       </p>
       <CopyField label="Windows (PowerShell)" value={real.windows} display={shown.windows} />
       <CopyField label="macOS" value={real.mac} display={shown.mac} />
