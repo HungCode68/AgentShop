@@ -19,6 +19,7 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required (openssl rand -hex 32)}
       UPSTREAM_BASE_URL: ${UPSTREAM_BASE_URL:-https://api.agentshop247.com/api}
       CORS_ORIGINS: ${CORS_ORIGINS:-https://agentshop.id.vn}
+      PUBLIC_API_HOST: ${PUBLIC_API_HOST:-https://agentshop.id.vn/api/proxy}
       DB_PATH: /data/gateway.db
     # Only reachable from the server itself; the public goes through nginx.
     # 8090 instead of 8080 because Jenkins already uses 8080 on this server.

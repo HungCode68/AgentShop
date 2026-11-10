@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,6 +11,7 @@ import { decrypt, encrypt, parseEncryptionKey, sha256 } from '../src/crypto.js'
 import { openDb } from '../src/db.js'
 import { KeyStore } from '../src/keys.js'
 import { createGateway } from '../src/server.js'
+import { buildBashScript } from '../src/setup.js'
 
 const ENC_KEY = parseEncryptionKey('11'.repeat(32))
 const ADMIN_TOKEN = 'admin-token-for-tests-0123456789'
@@ -68,6 +70,7 @@ before(async () => {
     keyPrefix: 'ak_',
     corsOrigins: ['*'],
     maxBodyBytes: 1024 * 1024,
+    publicApiHost: 'https://agentshop.id.vn/api/proxy',
   }
   store = new KeyStore(openDb(':memory:'), config)
   gateway = createGateway({ config, store, log: () => {} })
@@ -398,5 +401,143 @@ describe('unreliable connection to agentshop', () => {
       assert.equal(res.status, 502)
       assert.equal(calls(), 1)
     })
+  })
+})
+
+describe('setup endpoint', () => {
+  test('returns a bash script (os=mac) that carries the key, host and pinned models', async () => {
+    const { key } = store.create({ name: 'S', upstreamKey: UPSTREAM_GOOD })
+    const res = await fetch(`${base}/api/setup?key=${key}&os=mac`)
+    assert.equal(res.status, 200)
+    assert.equal(res.headers.get('content-type'), 'text/plain; charset=utf-8')
+    assert.match(res.headers.get('content-disposition') ?? '', /attachment.*agentshop-setup\.sh/)
+    const text = await res.text()
+    assert.match(text, /API_HOST=/)
+    assert.ok(text.includes(`API_KEY='${key}'`), 'script embeds the caller\'s key')
+    assert.ok(text.includes("API_HOST='https://agentshop.id.vn/api/proxy'"))
+    assert.match(text, /ANTHROPIC_MODEL='claude-sonnet-5-5'/)
+    assert.match(text, /ANTHROPIC_SMALL_FAST_MODEL='claude-haiku-4-5'/)
+    assert.match(text, /claudeCode\.environmentVariables/)
+    assert.match(text, /disableLoginPrompt/)
+    // The generated script never points at a raw key in a URL — it writes config to files.
+    assert.doesNotMatch(text, /check-usage\?key=/)
+    assert.equal(received.length, 0, 'setup does not call upstream')
+  })
+
+  test('returns a PowerShell script (os=windows) that carries the key and models', async () => {
+    const { key } = store.create({ name: 'W', upstreamKey: UPSTREAM_GOOD })
+    const res = await fetch(`${base}/api/setup?key=${key}&os=windows`)
+    assert.equal(res.status, 200)
+    assert.match(res.headers.get('content-disposition') ?? '', /agentshop-setup\.ps1/)
+    const text = await res.text()
+    assert.ok(text.includes(`$ApiKey = '${key}'`), 'script embeds the caller\'s key')
+    assert.match(text, /\$Model = 'claude-sonnet-5-5'/)
+    assert.match(text, /\$SmallModel = 'claude-haiku-4-5'/)
+    assert.match(text, /claudeCode\.environmentVariables/)
+    assert.match(text, /disableLoginPrompt/)
+    assert.match(text, /npm\.cmd install -g @anthropic-ai\/claude-code/)
+    assert.ok(text.includes("Join-Path $HOME '.claude/settings.json'"), 'settings path survives template escaping')
+    assert.ok(text.includes("-match '^[0-9]+$'"))
+    assert.doesNotMatch(text, /[^\x00-\x7F]/, 'ASCII only: PowerShell 5.1 pipes text to node as ASCII')
+  })
+
+  describe('generated settings merge (run for real in a temp dir)', () => {
+    let dir
+    before(() => {
+      dir = mkdtempSync(join(tmpdir(), 'setup-merge-'))
+    })
+    after(() => rmSync(dir, { recursive: true, force: true }))
+
+    /** Runs the exact Node block the scripts embed, the way they run it: `node - <args>` with the code on stdin. */
+    async function runMerge(claudeFile, vscodeFile) {
+      const script = buildBashScript({ apiHost: 'https://gw.example/api/proxy', key: 'ak_NEW' })
+      const code = script.slice(script.indexOf("<<'NODE'\n") + 9, script.indexOf('\nNODE\n'))
+      const child = spawn(process.execPath, ['-', claudeFile, vscodeFile, 'https://gw.example/api/proxy', 'ak_NEW', 'm-big', 'm-small'])
+      child.stdin.end(code)
+      let out = ''
+      child.stdout.on('data', (d) => (out += d))
+      child.stderr.on('data', (d) => (out += d))
+      const [exitCode] = await once(child, 'close')
+      assert.equal(exitCode, 0, out)
+      return out
+    }
+    const read = (p) => JSON.parse(readFileSync(p, 'utf8'))
+
+    test('keeps existing settings, replaces stale values, drops ANTHROPIC_API_KEY, is idempotent', async () => {
+      const c = join(dir, 'a-claude.json')
+      const v = join(dir, 'a-vscode.json')
+      writeFileSync(c, JSON.stringify({ model: 'opus', env: { KEEP: '1', ANTHROPIC_API_KEY: 'ak_OLD', ANTHROPIC_MODEL: 'old' } }))
+      writeFileSync(v, JSON.stringify({ 'editor.fontSize': 15, 'claudeCode.environmentVariables': [{ name: 'FOO', value: 'bar' }, { name: 'ANTHROPIC_API_KEY', value: 'ak_OLD' }] }))
+      await runMerge(c, v)
+      await runMerge(c, v)
+
+      assert.deepEqual(read(c), {
+        model: 'opus',
+        env: { KEEP: '1', ANTHROPIC_MODEL: 'm-big', ANTHROPIC_BASE_URL: 'https://gw.example/api/proxy', ANTHROPIC_AUTH_TOKEN: 'ak_NEW', ANTHROPIC_SMALL_FAST_MODEL: 'm-small' },
+      })
+      const vs = read(v)
+      assert.equal(vs['editor.fontSize'], 15)
+      assert.equal(vs['claudeCode.disableLoginPrompt'], true)
+      assert.deepEqual(vs['claudeCode.environmentVariables'].map((e) => e.name), [
+        'FOO', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_MODEL', 'ANTHROPIC_SMALL_FAST_MODEL',
+      ])
+      // The untouched original is kept once, not overwritten by the second run.
+      assert.equal(JSON.parse(readFileSync(`${c}.agentshop-backup`, 'utf8')).env.ANTHROPIC_API_KEY, 'ak_OLD')
+    })
+
+    test('reads VS Code JSONC (comments, trailing commas) and creates missing files', async () => {
+      const c = join(dir, 'b-missing', 'claude.json')
+      const v = join(dir, 'b-vscode.json')
+      writeFileSync(v, '// my settings\n{\n  "workbench.colorTheme": "Dark+", /* theme */\n  "url": "http://x//y",\n  "list": [1, 2,],\n}\n')
+      await runMerge(c, v)
+      const vs = read(v)
+      assert.equal(vs['workbench.colorTheme'], 'Dark+')
+      assert.equal(vs.url, 'http://x//y', '// inside a string is not a comment')
+      assert.deepEqual(vs.list, [1, 2])
+      assert.equal(read(c).env.ANTHROPIC_AUTH_TOKEN, 'ak_NEW')
+    })
+
+    test('leaves a file it cannot parse untouched instead of overwriting it', async () => {
+      const c = join(dir, 'c-claude.json')
+      const v = join(dir, 'c-vscode.json')
+      const broken = '{ "editor.fontSize": 15, oops }'
+      writeFileSync(v, broken)
+      const out = await runMerge(c, v)
+      assert.equal(readFileSync(v, 'utf8'), broken)
+      assert.match(out, /left unchanged/)
+      assert.equal(read(c).env.ANTHROPIC_AUTH_TOKEN, 'ak_NEW', 'the other file is still written')
+    })
+  })
+
+  test('rejects missing or invalid os', async () => {
+    const { key } = store.create({ name: 'O', upstreamKey: UPSTREAM_GOOD })
+    assert.equal((await fetch(`${base}/api/setup?key=${key}`)).status, 400)
+    assert.equal((await fetch(`${base}/api/setup?key=${key}&os=android`)).status, 400)
+  })
+
+  test('rejects unknown, revoked, expired and unassigned keys', async () => {
+    const revoked = store.create({ name: 'R', upstreamKey: 'as_revoked_1234' })
+    store.update(revoked.record.id, { status: 'revoked' })
+    const expired = store.create({ name: 'E', upstreamKey: 'as_expired_1234', expiresAt: '2020-01-01T00:00:00Z' })
+    const unassigned = store.create({ name: 'U' })
+
+    const cases = [
+      ['ak_doesnotexist', 401, 'API key not found or unassigned.'],
+      [revoked.key, 403, 'API key has been revoked.'],
+      [expired.key, 403, 'API key has expired.'],
+      [unassigned.key, 403, 'API key is not linked to an upstream account yet.'],
+    ]
+    for (const [key, status, message] of cases) {
+      const res = await fetch(`${base}/api/setup?key=${key}&os=mac`)
+      assert.equal(res.status, status, key)
+      assert.deepEqual(await res.json(), { success: false, message, data: null })
+    }
+    assert.equal(received.length, 0, 'rejected keys never reach upstream')
+  })
+
+  test('missing key → 400, wrong method → 405', async () => {
+    assert.equal((await fetch(`${base}/api/setup?os=mac`)).status, 400)
+    const { key } = store.create({ name: 'A', upstreamKey: UPSTREAM_GOOD })
+    assert.equal((await fetch(`${base}/api/setup?key=${key}&os=mac`, { method: 'POST' })).status, 405)
   })
 })

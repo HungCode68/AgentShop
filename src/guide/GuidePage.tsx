@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { CheckIcon, ClipboardIcon } from '../components/Icons'
 import { Topbar } from '../components/Topbar'
 import { API_BASE } from '../lib/api'
@@ -7,7 +7,16 @@ import { savedKey } from '../lib/savedKey'
 
 // What users paste into Chatbox's "API Host": our gateway's proxy root (Chatbox appends /messages itself).
 const API_HOST = new URL(`${API_BASE}/proxy`, window.location.origin).href
+const SETUP_URL = new URL(`${API_BASE}/setup`, window.location.origin).href
 const DOWNLOAD_URL = 'https://chatboxai.app'
+const KEY_PLACEHOLDER = 'KEY_CUA_BAN'
+
+/** One-line installers served by the gateway (GET /api/setup?os=…&key=…). */
+const setupCommands = (key: string) => ({
+  windows: `powershell -NoProfile -ExecutionPolicy Bypass -Command "irm '${SETUP_URL}?os=windows&key=${key}' | iex"`,
+  mac: `curl -fsSL '${SETUP_URL}?os=mac&key=${key}' | bash`,
+  linux: `curl -fsSL '${SETUP_URL}?os=linux&key=${key}' | bash`,
+})
 
 /** The user's own key, when the quota page remembered it or the link carried ?key=. */
 function knownKey(): string | null {
@@ -54,8 +63,44 @@ function Step({ n, title, img, alt, children }: { n: number; title: string; img:
   )
 }
 
+function QuickSetup({ keyValue }: { keyValue: string | null }) {
+  const real = setupCommands(keyValue ?? KEY_PLACEHOLDER)
+  // Shown with the key masked; the copy button copies the real command.
+  const shown = keyValue ? setupCommands(mask(keyValue)) : real
+  return (
+    <section className="card guide-keys guide-setup" id="cai-nhanh">
+      <h2>Dùng Claude Code (VS Code / terminal)? Cài bằng 1 lệnh</h2>
+      <p className="small muted">
+        Lệnh tự cài Claude Code (CLI + extension VS Code) và ghi sẵn API Host, key, model vào cấu hình. Setting cũ của bạn được giữ nguyên
+        (có bản sao lưu <span className="mono">.agentshop-backup</span>). Chạy xong, trong VS Code bấm <b>Developer: Reload Window</b>.
+      </p>
+      <CopyField label="Windows (PowerShell)" value={real.windows} display={shown.windows} />
+      <CopyField label="macOS" value={real.mac} display={shown.mac} />
+      <CopyField label="Linux" value={real.linux} display={shown.linux} />
+      {!keyValue && (
+        <p className="small muted">
+          Thay <span className="mono">{KEY_PLACEHOLDER}</span> bằng key <span className="mono">ak_…</span> của bạn trước khi chạy.
+        </p>
+      )}
+    </section>
+  )
+}
+
+const TOC = [
+  { href: '#chatbox', title: 'App Chatbox', desc: 'Chat trên máy tính hoặc điện thoại, 6 bước, khoảng 3 phút.' },
+  { href: '#cai-nhanh', title: 'Claude Code (VS Code / terminal)', desc: 'Dùng Claude để viết code, cài bằng 1 lệnh.' },
+  { href: '#gap-loi', title: 'Gặp lỗi?', desc: 'Các lỗi thường gặp và cách xử lý.' },
+]
+
 export default function GuidePage() {
   const [key] = useState(knownKey)
+
+  // The page is lazy-loaded, so the browser's own jump to #section happens before the
+  // section exists. Redo it once rendered, so links like /huong-dan#cai-nhanh work.
+  useEffect(() => {
+    const id = decodeURIComponent(window.location.hash.slice(1))
+    if (id) document.getElementById(id)?.scrollIntoView()
+  }, [])
 
   return (
     <div className="app">
@@ -66,11 +111,20 @@ export default function GuidePage() {
 
       <main className="container guide">
         <section className="hero">
-          <h1>Chat với Claude bằng app Chatbox</h1>
-          <p>Làm lần lượt 6 bước dưới đây, mất khoảng 3 phút. Bạn chỉ cần API key dạng ak_… đã được cấp.</p>
+          <h1>Hướng dẫn dùng Claude</h1>
+          <p>Bạn chỉ cần API key dạng ak_… đã được cấp. Chọn cách bạn muốn dùng:</p>
         </section>
 
-        <div className="card guide-keys">
+        <nav className="guide-toc" aria-label="Mục lục">
+          {TOC.map((item) => (
+            <a key={item.href} className="card guide-toc__item" href={item.href}>
+              <span className="guide-toc__title">{item.title}</span>
+              <span className="guide-toc__desc">{item.desc}</span>
+            </a>
+          ))}
+        </nav>
+
+        <div className="card guide-keys" id="chatbox">
           <h2>Hai thông tin bạn sẽ dán vào Chatbox</h2>
           <CopyField label="API Host" value={API_HOST} />
           {key ? (
@@ -141,7 +195,9 @@ export default function GuidePage() {
           </p>
         </Step>
 
-        <section className="card guide-faq">
+        <QuickSetup keyValue={key} />
+
+        <section className="card guide-faq" id="gap-loi">
           <h2>Gặp lỗi?</h2>
           <dl>
             <dt>Bấm Check báo lỗi</dt>

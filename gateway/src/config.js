@@ -38,6 +38,8 @@ export function loadConfig(env = process.env, { requireAdminToken = true } = {})
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
+    // Public root of the AI proxy, written into the /api/setup install script.
+    publicApiHost: (env.PUBLIC_API_HOST ?? 'https://agentshop.id.vn/api/proxy').replace(/\/+$/, ''),
     maxBodyBytes: Math.floor(maxBodyMb * 1024 * 1024),
   }
 }

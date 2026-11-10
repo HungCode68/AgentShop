@@ -3,6 +3,7 @@ import { handleAdmin } from './admin.js'
 import { applyCors, HttpError, sendJson } from './http.js'
 import { StoreError } from './keys.js'
 import { handleAiProxy, handleCheckUsage } from './proxy.js'
+import { handleSetup } from './setup.js'
 
 /**
  * @param {{config: ReturnType<import('./config.js').loadConfig>, store: import('./keys.js').KeyStore,
@@ -33,6 +34,7 @@ export function createGateway({ config, store, fetchImpl = fetch, log = (line) =
       }
 
       if (path.startsWith('/api/proxy/')) return await handleAiProxy(req, res, url, ctx)
+      if (path === '/api/setup') return handleSetup(req, res, url, { store, config })
       if (path === '/api/admin' || path.startsWith('/api/admin/')) return await handleAdmin(req, res, url, ctx)
 
       return sendJson(res, 404, { error: 'Not found' })

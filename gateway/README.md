@@ -16,14 +16,44 @@ Không có thư viện ngoài: chỉ dùng `node:http`, `fetch` và `node:sqlite
 | --- | --- |
 | `GET /api/proxy/check-usage?key=ak_…` | Kiểm tra hạn mức (trang frontend dùng) |
 | `* /api/proxy/*` | Proxy AI tương thích Anthropic, ví dụ `POST /api/proxy/v1/messages`. Key nhận qua `x-api-key` hoặc `Authorization: Bearer` và được chuyển tiếp bằng đúng header đó. |
+| `GET /api/setup?os=windows\|mac\|linux&key=ak_…` | Script cài nhanh Claude Code cho client (xem bên dưới) |
 | `/api/admin/keys…` | API quản trị, dùng bởi trang `/admin` của frontend (cần `Authorization: Bearer $ADMIN_TOKEN`) |
 | `GET /healthz` | Health check |
 
-### Cấu hình Claude Code cho client
+### Cài Claude Code cho client bằng 1 lệnh
+
+Trang `/huong-dan` có sẵn 3 lệnh này (tự điền key khi trang biết key của khách):
+
+```powershell
+# Windows (PowerShell 5.1 trở lên)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm 'https://agentshop.id.vn/api/setup?os=windows&key=ak_xxx' | iex"
+```
+
+```bash
+# macOS / Linux
+curl -fsSL 'https://agentshop.id.vn/api/setup?os=mac&key=ak_xxx' | bash
+```
+
+Script ([src/setup.js](src/setup.js)) làm lần lượt:
+
+1. Cài Node LTS nếu chưa có Node 18+ (Windows: winget; macOS: Homebrew; Linux: hướng dẫn tự cài).
+2. `npm install -g @anthropic-ai/claude-code` (Windows gọi `npm.cmd` để không bị execution policy chặn).
+3. Cài extension `anthropic.claude-code` nếu máy có lệnh `code`.
+4. Ghi `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL=claude-sonnet-5-5`, `ANTHROPIC_SMALL_FAST_MODEL=claude-haiku-4-5` vào `~/.claude/settings.json` (Claude Code đọc ở cả terminal lẫn VS Code) và vào `claudeCode.environmentVariables` + `claudeCode.disableLoginPrompt` trong settings của VS Code.
+
+Ghi config theo kiểu gộp: giữ nguyên các setting khác, đọc được settings VS Code có comment/dấu phẩy thừa, sao lưu bản gốc một lần thành `<file>.agentshop-backup`, file không đọc được thì để nguyên và in hướng dẫn. Xoá `ANTHROPIC_API_KEY` khỏi các file này (nó gửi qua `x-api-key`, gateway ưu tiên header đó nên key cũ sẽ thắng key mới) và cảnh báo nếu biến này còn trong môi trường hệ thống. Chạy lại nhiều lần không sao.
+
+Model ghim sẵn vì model mặc định của Claude Code có thể không nằm trong danh sách agentshop hỗ trợ (bị 400 rồi retry, khách thấy "rất chậm"). Khách vẫn đổi model bằng `/model` bình thường.
+
+Key nằm trong URL nên: khách chỉ nên chạy lệnh trên máy của mình, và log của gateway chỉ ghi đường dẫn, không ghi query string. Key không hợp lệ/thu hồi/hết hạn bị từ chối giống check-usage.
+
+Cấu hình thủ công (nếu không dùng script):
 
 ```bash
 export ANTHROPIC_BASE_URL=https://agentshop.id.vn/api/proxy
 export ANTHROPIC_AUTH_TOKEN=ak_xxx
+export ANTHROPIC_MODEL=claude-sonnet-5-5
+export ANTHROPIC_SMALL_FAST_MODEL=claude-haiku-4-5
 ```
 
 ### Mã lỗi khi key không hợp lệ
@@ -98,7 +128,7 @@ Mỗi lần thử thất bại được ghi một dòng `WARN ... upstream attem
 
 ## Cấu hình
 
-Khi chạy local, gateway đọc file `.env` ở thư mục gốc project (dùng chung với frontend, xem [.env.example](../.env.example)). Trên server, biến được truyền qua `docker-compose.yml` từ Jenkins. Các biến: `PORT`, `ADMIN_TOKEN`, `ENCRYPTION_KEY`, `UPSTREAM_BASE_URL`, `DB_PATH`, `KEY_PREFIX`, `CORS_ORIGINS`, `MAX_BODY_MB`.
+Khi chạy local, gateway đọc file `.env` ở thư mục gốc project (dùng chung với frontend, xem [.env.example](../.env.example)). Trên server, biến được truyền qua `docker-compose.yml` từ Jenkins. Các biến: `PORT`, `ADMIN_TOKEN`, `ENCRYPTION_KEY`, `UPSTREAM_BASE_URL`, `DB_PATH`, `KEY_PREFIX`, `CORS_ORIGINS`, `MAX_BODY_MB`, `PUBLIC_API_HOST` (API Host ghi vào script cài nhanh, mặc định `https://agentshop.id.vn/api/proxy`).
 
 ## Test
 

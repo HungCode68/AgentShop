@@ -908,8 +908,40 @@ a.brand {
   font-weight: 700;
   letter-spacing: -0.01em;
 }
+.guide-toc {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.guide a.guide-toc__item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  color: var(--text);
+  text-decoration: none;
+  transition: border-color 0.15s, transform 0.15s;
+}
+.guide a.guide-toc__item:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  transform: translateY(-1px);
+}
+.guide-toc__title {
+  font-weight: 700;
+  color: var(--accent);
+}
+.guide-toc__desc {
+  font-size: 13px;
+  color: var(--text-2);
+}
+@media (max-width: 640px) {
+  .guide-toc {
+    grid-template-columns: 1fr;
+  }
+}
 .guide-keys,
 .guide-faq {
+  scroll-margin-top: 16px;
   padding: 20px;
   display: flex;
   flex-direction: column;
@@ -941,6 +973,18 @@ a.brand {
 }
 .copy-field__btn {
   flex-shrink: 0;
+}
+/* Quick-setup commands are long: label on its own line, command wraps instead of truncating. */
+.guide-setup .copy-field {
+  flex-wrap: wrap;
+}
+.guide-setup .copy-field__label {
+  width: 100%;
+}
+.guide-setup .copy-field__value {
+  white-space: normal;
+  word-break: break-all;
+  font-size: 12.5px;
 }
 .copy-field__btn.is-done {
   color: var(--ok);
