@@ -99,6 +99,10 @@ export function mergeSettingsMain(argv = process.argv) {
     ANTHROPIC_AUTH_TOKEN: key,
     ANTHROPIC_MODEL: model,
     ANTHROPIC_SMALL_FAST_MODEL: smallModel,
+    // Claude Code assumes a ~1M-token window for the 5.x models and only auto-compacts near it.
+    // agentshop's backends get slow (and fail) long before that, so use the 200k window: the
+    // conversation is then compacted around 170k tokens and every turn stays light.
+    CLAUDE_CODE_DISABLE_1M_CONTEXT: '1',
   }
 
   function stripJsonc(s) {

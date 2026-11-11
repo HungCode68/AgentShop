@@ -2,7 +2,8 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { readBody, sendJson } from './http.js'
 import { decodeUpstreamKey } from './keys.js'
-import { looksTruncated, relayMessageStream } from './sse.js'
+import { fillInputTokens, looksTruncated, relayMessageStream } from './sse.js'
+import { estimateInputTokens } from './tokens.js'
 
 /** Why a client key was rejected → [HTTP status, Anthropic error type, message]. */
 const REJECTIONS = {
@@ -162,29 +163,34 @@ export async function handleAiProxy(req, res, url, { store, config, fetchImpl, l
   const isMessages = /\/v1\/messages\/?$/.test(url.pathname)
   const contentType = upstream.headers.get('content-type') ?? ''
   const label = `${req.method} ${url.pathname}`
-  const requestedMax = isMessages ? requestedMaxTokens(body) : undefined
+  const request = isMessages ? parseJson(body) : undefined
+  const requestedMax = Number.isFinite(request?.max_tokens) ? request.max_tokens : undefined
+  const inputEstimate = estimateInputTokens(request)
 
   // Claude Code's main path: a streamed /v1/messages answer, relayed event by event (see sse.js).
   if (isMessages && upstream.ok && upstream.body && contentType.includes('text/event-stream')) {
     res.writeHead(upstream.status, outHeaders)
     return relayMessageStream(upstream.body, res, {
       requestedMax,
+      inputEstimate,
       pingMs: config.streamPingMs,
       warn: (msg) => warn(log, `${label} key=#${resolved.record.id} ${msg}`),
     })
   }
 
-  // Non-streamed /v1/messages answer: same stop_reason fix on the JSON body.
+  // Non-streamed /v1/messages answer: same fixes on the JSON body.
   if (isMessages && upstream.ok && contentType.includes('application/json')) {
     const text = await upstream.text()
     let out = text
     try {
       const msg = JSON.parse(text)
+      let changed = fillInputTokens(msg.usage, inputEstimate)
       if (looksTruncated(msg.stop_reason, msg.usage?.output_tokens, requestedMax)) {
         warn(log, `${label} key=#${resolved.record.id} answer cut at agentshop's output limit (${msg.usage.output_tokens} tokens) but labelled end_turn; sent max_tokens`)
         msg.stop_reason = 'max_tokens'
-        out = JSON.stringify(msg)
+        changed = true
       }
+      if (changed) out = JSON.stringify(msg)
     } catch {
       /* not JSON after all: pass through unchanged */
     }
@@ -204,11 +210,11 @@ export async function handleAiProxy(req, res, url, { store, config, fetchImpl, l
   }
 }
 
-/** max_tokens from a /v1/messages request body, or undefined. */
-function requestedMaxTokens(body) {
+/** The request body as an object, or undefined when it is not JSON. */
+function parseJson(body) {
   try {
-    const n = JSON.parse(body?.toString('utf8') ?? '').max_tokens
-    return Number.isFinite(n) ? n : undefined
+    const v = JSON.parse(body?.toString('utf8') ?? '')
+    return v && typeof v === 'object' ? v : undefined
   } catch {
     return undefined
   }

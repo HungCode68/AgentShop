@@ -32,34 +32,58 @@ const PING = 'event: ping\ndata: {"type": "ping"}\n\n'
 const errorEvent = (message) =>
   `event: error\ndata: ${JSON.stringify({ type: 'error', error: { type: 'api_error', message } })}\n\n`
 
+/** True when a usage object reports no input at all (agentshop always does). */
+const reportsNoInput = (u) =>
+  !!u && !(u.input_tokens > 0) && !(u.cache_read_input_tokens > 0) && !(u.cache_creation_input_tokens > 0)
+
+/**
+ * Fills in an estimated input_tokens where upstream reported none, so Claude Code can see how big
+ * the conversation is and auto-compact it. Returns true when the usage object was changed.
+ */
+export function fillInputTokens(usage, inputEstimate) {
+  if (!(inputEstimate > 0) || !reportsNoInput(usage) || !('input_tokens' in usage)) return false
+  usage.input_tokens = inputEstimate
+  return true
+}
+
 /** Rewrites one complete SSE event if needed. Returns [text to send, info]. */
-function processEvent(event, requestedMax) {
+function processEvent(event, { requestedMax, inputEstimate }) {
   const lines = event.split('\n')
   const i = lines.findIndex((l) => l.startsWith('data:'))
   if (i < 0) return [event, null]
   const data = lines[i].slice(5).trim()
   if (data.includes('"message_stop"')) return [event, { stop: true }]
   if (data.includes('"type":"error"') || data.includes('"type": "error"')) return [event, { error: true }]
-  if (!data.includes('"message_delta"')) return [event, null]
+  const isStart = data.includes('"message_start"')
+  if (!isStart && !data.includes('"message_delta"')) return [event, null]
   let msg
   try {
     msg = JSON.parse(data)
   } catch {
     return [event, null]
   }
-  const out = msg.usage?.output_tokens
-  if (msg.type !== 'message_delta' || !looksTruncated(msg.delta?.stop_reason, out, requestedMax)) return [event, null]
-  msg.delta.stop_reason = 'max_tokens'
+  const info = {}
+  if (msg.type === 'message_start') {
+    if (fillInputTokens(msg.message?.usage, inputEstimate)) info.filledInput = true
+  } else if (msg.type === 'message_delta') {
+    if (fillInputTokens(msg.usage, inputEstimate)) info.filledInput = true
+    const out = msg.usage?.output_tokens
+    if (looksTruncated(msg.delta?.stop_reason, out, requestedMax)) {
+      msg.delta.stop_reason = 'max_tokens'
+      info.relabelled = out
+    }
+  }
+  if (!info.filledInput && !info.relabelled) return [event, null]
   lines[i] = `data: ${JSON.stringify(msg)}`
-  return [lines.join('\n'), { relabelled: out }]
+  return [lines.join('\n'), info]
 }
 
 /**
  * @param {ReadableStream} upstreamBody  fetch() response body from agentshop
  * @param {import('node:http').ServerResponse} res  headers already written
- * @param {{requestedMax?: number, pingMs?: number, warn?: (msg: string) => void}} opts
+ * @param {{requestedMax?: number, inputEstimate?: number, pingMs?: number, warn?: (msg: string) => void}} opts
  */
-export async function relayMessageStream(upstreamBody, res, { requestedMax, pingMs = 15_000, warn = () => {} } = {}) {
+export async function relayMessageStream(upstreamBody, res, { requestedMax, inputEstimate, pingMs = 15_000, warn = () => {} } = {}) {
   const started = Date.now()
   const decoder = new TextDecoder()
   let pending = '' // start of an event whose end has not arrived yet
@@ -86,7 +110,7 @@ export async function relayMessageStream(upstreamBody, res, { requestedMax, ping
     while ((end = pending.indexOf('\n\n')) >= 0) {
       const event = pending.slice(0, end + 2)
       pending = pending.slice(end + 2)
-      const [text, info] = processEvent(event, requestedMax)
+      const [text, info] = processEvent(event, { requestedMax, inputEstimate })
       if (info?.stop) sawStop = true
       if (info?.error) sawError = true
       if (info?.relabelled) {

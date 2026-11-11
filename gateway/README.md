@@ -138,6 +138,10 @@ Với `POST /v1/messages`, gateway ([src/sse.js](src/sse.js)) chuyển tiếp st
 Mỗi trường hợp ghi một dòng `WARN`, xem bằng `docker logs quota-gateway 2>&1 | grep WARN`:
 `... output limit (...) but labelled end_turn`, `... broke after …ms: <mã lỗi>`, `... ended without message_stop`.
 
+4. Điền `usage.input_tokens` ước lượng ([src/tokens.js](src/tokens.js), ~4 ký tự/token, ảnh/PDF tính cố định) khi agentshop báo 0. Claude Code dựa vào số này để tự tóm tắt (auto-compact) hội thoại dài; với 0 nó không bao giờ tóm tắt, mỗi lượt gửi lại toàn bộ context nên càng lúc càng chậm. Backend nào đã báo số thật thì giữ nguyên.
+
+Script cài nhanh đặt thêm `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`: Claude Code coi model 5.x có context ~1 triệu token và chỉ tóm tắt khi gần mức đó; với cửa sổ 200k nó tóm tắt quanh 170k token. Khách đã cài trước đó cần chạy lại lệnh cài một lần để có biến này.
+
 Phía agentshop vẫn còn giới hạn 16384 token mỗi lượt; muốn Claude Code tự chia nhỏ câu trả lời thì đặt `CLAUDE_CODE_MAX_OUTPUT_TOKENS` ≤ 16000 cho client.
 
 ## Bảo mật

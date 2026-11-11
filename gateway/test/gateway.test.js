@@ -12,6 +12,7 @@ import { openDb } from '../src/db.js'
 import { KeyStore } from '../src/keys.js'
 import { createGateway } from '../src/server.js'
 import { buildBashScript } from '../src/setup.js'
+import { estimateInputTokens } from '../src/tokens.js'
 
 const ENC_KEY = parseEncryptionKey('11'.repeat(32))
 const ADMIN_TOKEN = 'admin-token-for-tests-0123456789'
@@ -53,14 +54,14 @@ const upstream = createServer(async (req, res) => {
   const sse = (type, data) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`
   if (url.pathname === '/api/proxy/v1/messages' && scenario === 'json-truncated') {
     res.writeHead(200, { 'content-type': 'application/json' })
-    return res.end(JSON.stringify({ type: 'message', stop_reason: 'end_turn', usage: { output_tokens: 16384 } }))
+    return res.end(JSON.stringify({ type: 'message', stop_reason: 'end_turn', usage: { input_tokens: 0, output_tokens: 16384 } }))
   }
   if (url.pathname === '/api/proxy/v1/messages' && parsed.stream) {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'set-cookie': 'upstream=1' })
     // Like agentshop: output_tokens is a power of two when its own limit cut the answer.
     const outTokens = scenario === 'truncated' || scenario === 'split' ? 2048 : 12
     const events = [
-      sse('message_start', { message: { usage: { input_tokens: 0, output_tokens: 0 } } }),
+      sse('message_start', { message: { usage: { input_tokens: scenario === 'real-usage' ? 777 : 0, output_tokens: 0 } } }),
       sse('content_block_delta', { index: 0, delta: { type: 'text_delta', text: 'hi' } }),
       sse('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: outTokens } }),
       sse('message_stop', {}),
@@ -450,10 +451,31 @@ describe('Claude Code streams through agentshop quirks', () => {
     const res = await fetch(`${base}/api/proxy/v1/messages`, {
       method: 'POST',
       headers: { 'x-api-key': key },
-      body: JSON.stringify({ max_tokens: 32000, scenario: 'json-truncated' }),
+      body: JSON.stringify({ max_tokens: 32000, scenario: 'json-truncated', messages: [{ role: 'user', content: 'hi' }] }),
     })
     assert.equal(res.status, 200)
-    assert.equal((await res.json()).stop_reason, 'max_tokens')
+    const msg = await res.json()
+    assert.equal(msg.stop_reason, 'max_tokens')
+    assert.ok(msg.usage.input_tokens > 0, 'input_tokens filled in for non-streamed answers too')
+  })
+
+  test('input_tokens=0 from agentshop is replaced by an estimate so Claude Code can auto-compact', async () => {
+    const big = 'x'.repeat(40_000) // ~10k tokens
+    const { events } = await stream(base, { max_tokens: 1500, system: big, messages: [{ role: 'user', content: 'hi' }] })
+    const est = events.find((e) => e.type === 'message_start').message.usage.input_tokens
+    assert.ok(est >= 10_000 && est < 10_200, `estimate ${est}`)
+  })
+
+  test('a backend that reports real input usage is left alone', async () => {
+    const { events } = await stream(base, { max_tokens: 1500, scenario: 'real-usage', messages: [{ role: 'user', content: 'hi' }] })
+    assert.equal(events.find((e) => e.type === 'message_start').message.usage.input_tokens, 777)
+  })
+
+  test('the estimate counts attachments at a fixed cost, not by their base64 size', () => {
+    const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A'.repeat(2_000_000) } }
+    const est = estimateInputTokens({ messages: [{ role: 'user', content: [image, { type: 'text', text: 'what is this?' }] }] })
+    assert.ok(est > 1600 && est < 1700, `estimate ${est}`)
+    assert.equal(estimateInputTokens({ prompt: 'not a messages request' }), undefined)
   })
 })
 
@@ -604,13 +626,13 @@ describe('setup endpoint', () => {
 
       assert.deepEqual(read(c), {
         model: 'opus',
-        env: { KEEP: '1', ANTHROPIC_MODEL: 'm-big', ANTHROPIC_BASE_URL: 'https://gw.example/api/proxy', ANTHROPIC_AUTH_TOKEN: 'ak_NEW', ANTHROPIC_SMALL_FAST_MODEL: 'm-small' },
+        env: { KEEP: '1', ANTHROPIC_MODEL: 'm-big', ANTHROPIC_BASE_URL: 'https://gw.example/api/proxy', ANTHROPIC_AUTH_TOKEN: 'ak_NEW', ANTHROPIC_SMALL_FAST_MODEL: 'm-small', CLAUDE_CODE_DISABLE_1M_CONTEXT: '1' },
       })
       const vs = read(v)
       assert.equal(vs['editor.fontSize'], 15)
       assert.equal(vs['claudeCode.disableLoginPrompt'], true)
       assert.deepEqual(vs['claudeCode.environmentVariables'].map((e) => e.name), [
-        'FOO', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_MODEL', 'ANTHROPIC_SMALL_FAST_MODEL',
+        'FOO', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_MODEL', 'ANTHROPIC_SMALL_FAST_MODEL', 'CLAUDE_CODE_DISABLE_1M_CONTEXT',
       ])
       // The untouched original is kept once, not overwritten by the second run.
       assert.equal(JSON.parse(readFileSync(`${c}.agentshop-backup`, 'utf8')).env.ANTHROPIC_API_KEY, 'ak_OLD')
