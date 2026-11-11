@@ -121,6 +121,25 @@ Thỉnh thoảng server mở kết nối mới tới agentshop bị treo (DNS ho
 
 Mỗi lần thử thất bại được ghi một dòng `WARN ... upstream attempt 1/2 failed: TypeError: <mã lỗi>`. Xem bằng lệnh `docker logs quota-gateway 2>&1 | grep WARN`.
 
+## Claude Code "đang làm thì dừng": những gì gateway sửa giúp
+
+Đo thực tế qua agentshop (11/2026) thấy:
+
+- agentshop tự đổi `max_tokens` (làm tròn lên luỹ thừa của 2, tối đa 16384) và khi câu trả lời chạm giới hạn đó vẫn báo `stop_reason: "end_turn"`. Claude Code tưởng đã xong nên dừng giữa chừng.
+- Stream không có `ping` và có lúc im lặng hơn 60 giây; thỉnh thoảng kết nối bị đứt giữa câu trả lời.
+- agentshop tự bật thinking, ăn vào hạn mức output; `input_tokens` luôn báo 0.
+
+Với `POST /v1/messages`, gateway ([src/sse.js](src/sse.js)) chuyển tiếp stream theo từng sự kiện và:
+
+1. Đổi `end_turn` thành `max_tokens` khi `output_tokens` là luỹ thừa của 2, ≥ 1024 và ≥ min(`max_tokens` client xin, 16384) — tức là bị agentshop cắt. Áp dụng cả cho response không stream.
+2. Gửi sự kiện `ping` cho client sau 15 giây không có gì từ agentshop (chỉ chèn giữa hai sự kiện).
+3. Khi kết nối tới agentshop đứt giữa chừng, hoặc stream kết thúc mà không có `message_stop`, gửi một sự kiện `error` chuẩn Anthropic thay vì để client nhận câu trả lời cụt.
+
+Mỗi trường hợp ghi một dòng `WARN`, xem bằng `docker logs quota-gateway 2>&1 | grep WARN`:
+`... output limit (...) but labelled end_turn`, `... broke after …ms: <mã lỗi>`, `... ended without message_stop`.
+
+Phía agentshop vẫn còn giới hạn 16384 token mỗi lượt; muốn Claude Code tự chia nhỏ câu trả lời thì đặt `CLAUDE_CODE_MAX_OUTPUT_TOKENS` ≤ 16000 cho client.
+
 ## Bảo mật
 
 - Key `ak_` được tra cứu qua bản băm SHA-256, và lưu thêm một bản mã hoá AES-256-GCM để admin sao chép lại được (nút sao chép trên trang `/admin`, `GET /api/admin/keys/:id/key` hoặc lệnh `reveal`). Key tạo trước khi có tính năng này không sao chép được, cần cấp lại (rotate) một lần.

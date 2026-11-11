@@ -2,6 +2,7 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { readBody, sendJson } from './http.js'
 import { decodeUpstreamKey } from './keys.js'
+import { looksTruncated, relayMessageStream } from './sse.js'
 
 /** Why a client key was rejected → [HTTP status, Anthropic error type, message]. */
 const REJECTIONS = {
@@ -157,13 +158,58 @@ export async function handleAiProxy(req, res, url, { store, config, fetchImpl, l
   upstream.headers.forEach((value, name) => {
     if (!DROP_RESPONSE_HEADERS.has(name)) outHeaders[name] = value
   })
-  res.writeHead(upstream.status, outHeaders)
 
+  const isMessages = /\/v1\/messages\/?$/.test(url.pathname)
+  const contentType = upstream.headers.get('content-type') ?? ''
+  const label = `${req.method} ${url.pathname}`
+  const requestedMax = isMessages ? requestedMaxTokens(body) : undefined
+
+  // Claude Code's main path: a streamed /v1/messages answer, relayed event by event (see sse.js).
+  if (isMessages && upstream.ok && upstream.body && contentType.includes('text/event-stream')) {
+    res.writeHead(upstream.status, outHeaders)
+    return relayMessageStream(upstream.body, res, {
+      requestedMax,
+      pingMs: config.streamPingMs,
+      warn: (msg) => warn(log, `${label} key=#${resolved.record.id} ${msg}`),
+    })
+  }
+
+  // Non-streamed /v1/messages answer: same stop_reason fix on the JSON body.
+  if (isMessages && upstream.ok && contentType.includes('application/json')) {
+    const text = await upstream.text()
+    let out = text
+    try {
+      const msg = JSON.parse(text)
+      if (looksTruncated(msg.stop_reason, msg.usage?.output_tokens, requestedMax)) {
+        warn(log, `${label} key=#${resolved.record.id} answer cut at agentshop's output limit (${msg.usage.output_tokens} tokens) but labelled end_turn; sent max_tokens`)
+        msg.stop_reason = 'max_tokens'
+        out = JSON.stringify(msg)
+      }
+    } catch {
+      /* not JSON after all: pass through unchanged */
+    }
+    res.writeHead(upstream.status, outHeaders)
+    return res.end(out)
+  }
+
+  res.writeHead(upstream.status, outHeaders)
   if (!upstream.body || req.method === 'HEAD') return res.end()
+  const started = Date.now()
   try {
-    // Streams SSE chunks as they arrive; if the client disconnects the upstream request is cancelled too.
+    // Streams chunks as they arrive; if the client disconnects the upstream request is cancelled too.
     await pipeline(Readable.fromWeb(upstream.body), res)
-  } catch {
+  } catch (err) {
+    if (!abort.signal.aborted) warn(log, `${label} response from agentshop broke after ${Date.now() - started}ms: ${describeError(err)}`)
     res.destroy()
+  }
+}
+
+/** max_tokens from a /v1/messages request body, or undefined. */
+function requestedMaxTokens(body) {
+  try {
+    const n = JSON.parse(body?.toString('utf8') ?? '').max_tokens
+    return Number.isFinite(n) ? n : undefined
+  } catch {
+    return undefined
   }
 }

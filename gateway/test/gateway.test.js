@@ -41,11 +41,44 @@ const upstream = createServer(async (req, res) => {
       ),
     )
   }
-  if (url.pathname === '/api/proxy/v1/messages' && JSON.parse(body || '{}').stream) {
+  const parsed = (() => {
+    try {
+      return JSON.parse(body || '{}')
+    } catch {
+      return {}
+    }
+  })()
+  const scenario = parsed.scenario // test-only field that steers this fake
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  const sse = (type, data) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`
+  if (url.pathname === '/api/proxy/v1/messages' && scenario === 'json-truncated') {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    return res.end(JSON.stringify({ type: 'message', stop_reason: 'end_turn', usage: { output_tokens: 16384 } }))
+  }
+  if (url.pathname === '/api/proxy/v1/messages' && parsed.stream) {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'set-cookie': 'upstream=1' })
-    for (const ev of ['message_start', 'content_block_delta', 'message_stop']) {
-      res.write(`event: ${ev}\ndata: {}\n\n`)
-      await new Promise((r) => setTimeout(r, 20))
+    // Like agentshop: output_tokens is a power of two when its own limit cut the answer.
+    const outTokens = scenario === 'truncated' || scenario === 'split' ? 2048 : 12
+    const events = [
+      sse('message_start', { message: { usage: { input_tokens: 0, output_tokens: 0 } } }),
+      sse('content_block_delta', { index: 0, delta: { type: 'text_delta', text: 'hi' } }),
+      sse('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: outTokens } }),
+      sse('message_stop', {}),
+    ]
+    if (scenario === 'split') {
+      // Every byte in its own chunk: events must be reassembled before they are inspected.
+      for (const ch of events.join('')) {
+        res.write(ch)
+        await wait(0)
+      }
+      return res.end()
+    }
+    for (const [i, ev] of events.entries()) {
+      if (scenario === 'break' && i === 2) return res.destroy()
+      if (scenario === 'nostop' && i === 3) return res.end()
+      if (scenario === 'silent' && i === 2) await wait(300)
+      res.write(ev)
+      await wait(20)
     }
     return res.end()
   }
@@ -323,6 +356,104 @@ describe('database migration', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('Claude Code streams through agentshop quirks', () => {
+  /** A second gateway with its own config and a captured log. */
+  async function withGateway(extraConfig, fn) {
+    const lines = []
+    const gw = createGateway({ config: { ...config, ...extraConfig }, store, log: (l) => lines.push(l) })
+    gw.listen(0)
+    await once(gw, 'listening')
+    try {
+      return await fn(`http://127.0.0.1:${gw.address().port}`, lines)
+    } finally {
+      gw.close()
+    }
+  }
+  /** Sends a streamed /v1/messages request and returns the parsed events the client received. */
+  async function stream(gwBase, payload) {
+    const { key } = store.create({ name: `S${Math.random()}`, upstreamKey: `as_stream_${Math.random()}` })
+    const res = await fetch(`${gwBase}/api/proxy/v1/messages`, {
+      method: 'POST',
+      headers: { 'x-api-key': key, 'content-type': 'application/json' },
+      body: JSON.stringify({ stream: true, ...payload }),
+    })
+    const text = await res.text()
+    const events = text
+      .split('\n\n')
+      .filter((e) => e.trim())
+      .map((e) => JSON.parse(e.split('\n').find((l) => l.startsWith('data:')).slice(5)))
+    return { status: res.status, events, text }
+  }
+  const stopReason = (events) => events.find((e) => e.type === 'message_delta')?.delta.stop_reason
+
+  test('a normal answer passes through unchanged', async () => {
+    const { events, text } = await stream(base, { max_tokens: 1500 })
+    assert.deepEqual(events.map((e) => e.type), ['message_start', 'content_block_delta', 'message_delta', 'message_stop'])
+    assert.equal(stopReason(events), 'end_turn')
+    assert.doesNotMatch(text, /ping|error/)
+  })
+
+  test('an answer cut at agentshop\'s limit but labelled end_turn is relabelled max_tokens', async () => {
+    await withGateway({}, async (gw, lines) => {
+      const { events } = await stream(gw, { max_tokens: 1500, scenario: 'truncated' })
+      assert.equal(stopReason(events), 'max_tokens')
+      assert.equal(events.at(-1).type, 'message_stop')
+      assert.ok(lines.some((l) => /WARN .*output limit \(2048 tokens\)/.test(l)), lines.join('\n'))
+    })
+  })
+
+  test('a natural end below the requested limit is not relabelled', async () => {
+    // 2048 output tokens but the client allowed 32000 (agentshop's cap is 16384): not a cut.
+    const { events } = await stream(base, { max_tokens: 32000, scenario: 'truncated' })
+    assert.equal(stopReason(events), 'end_turn')
+  })
+
+  test('events split across many chunks are reassembled before being inspected', async () => {
+    const { events } = await stream(base, { max_tokens: 1500, scenario: 'split' })
+    assert.equal(events.length, 4)
+    assert.equal(stopReason(events), 'max_tokens')
+  })
+
+  test('pings are sent while agentshop is silent, only between events', async () => {
+    await withGateway({ streamPingMs: 50 }, async (gw) => {
+      const { events } = await stream(gw, { max_tokens: 1500, scenario: 'silent' })
+      const types = events.map((e) => e.type)
+      assert.ok(types.includes('ping'), types.join(','))
+      assert.deepEqual(types.filter((t) => t !== 'ping'), ['message_start', 'content_block_delta', 'message_delta', 'message_stop'])
+    })
+  })
+
+  test('a connection that breaks mid-answer ends with an error event and a WARN log', async () => {
+    await withGateway({}, async (gw, lines) => {
+      const { status, events } = await stream(gw, { max_tokens: 1500, scenario: 'break' })
+      assert.equal(status, 200)
+      assert.equal(events.at(-1).type, 'error')
+      assert.equal(events.at(-1).error.type, 'api_error')
+      assert.ok(!events.some((e) => e.type === 'message_stop'))
+      assert.ok(lines.some((l) => /WARN .*broke after \d+ms/.test(l)), lines.join('\n'))
+    })
+  })
+
+  test('a stream that ends without message_stop also gets an error event', async () => {
+    await withGateway({}, async (gw, lines) => {
+      const { events } = await stream(gw, { max_tokens: 1500, scenario: 'nostop' })
+      assert.equal(events.at(-1).type, 'error')
+      assert.ok(lines.some((l) => /WARN .*without message_stop/.test(l)), lines.join('\n'))
+    })
+  })
+
+  test('non-streamed answers get the same stop_reason fix', async () => {
+    const { key } = store.create({ name: 'J', upstreamKey: 'as_json_truncated' })
+    const res = await fetch(`${base}/api/proxy/v1/messages`, {
+      method: 'POST',
+      headers: { 'x-api-key': key },
+      body: JSON.stringify({ max_tokens: 32000, scenario: 'json-truncated' }),
+    })
+    assert.equal(res.status, 200)
+    assert.equal((await res.json()).stop_reason, 'max_tokens')
   })
 })
 
