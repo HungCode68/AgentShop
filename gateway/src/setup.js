@@ -315,18 +315,68 @@ function Node-Major {
   if ($v -match '^[0-9]+$') { return [int]$v } else { return 0 }
 }
 
+function Add-UserPath([string]$dir) {
+  if (-not $dir) { return }
+  $user = [Environment]::GetEnvironmentVariable('Path', 'User')
+  $parts = @()
+  if ($user) { $parts = @($user -split ';' | Where-Object { $_ }) }
+  if ($parts -notcontains $dir) { [Environment]::SetEnvironmentVariable('Path', (($parts + $dir) -join ';'), 'User') }
+  if (($env:Path -split ';') -notcontains $dir) { $env:Path = $env:Path + ';' + $dir }
+}
+
+# Fallback when winget is missing or broken: the official zip from nodejs.org, unpacked
+# per-user (no admin rights, no installer) and put on the user PATH.
+function Install-NodePortable {
+  try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $ProgressPreference = 'SilentlyContinue'
+    $arch = 'x64'
+    if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { $arch = 'arm64' }
+    $index = Invoke-RestMethod -UseBasicParsing 'https://nodejs.org/dist/index.json'
+    $rel = $index | Where-Object { $_.lts -and ($_.files -contains ('win-' + $arch + '-zip')) } | Select-Object -First 1
+    if (-not $rel) { return $false }
+    $name = 'node-' + $rel.version + '-win-' + $arch
+    $zip = Join-Path $env:TEMP ($name + '.zip')
+    Say ("Downloading Node " + $rel.version + " from nodejs.org (no admin rights needed).")
+    Invoke-WebRequest -UseBasicParsing ('https://nodejs.org/dist/' + $rel.version + '/' + $name + '.zip') -OutFile $zip
+    $root = Join-Path $env:LOCALAPPDATA 'Programs'
+    New-Item -ItemType Directory -Force $root | Out-Null
+    $dest = Join-Path $root $name
+    # Leftovers from an interrupted run would make extraction fail.
+    if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+    # ZipFile instead of Expand-Archive: much faster, and a failure is one message instead of
+    # thousands of red rollback errors.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $root)
+    Remove-Item $zip -Force -ErrorAction SilentlyContinue
+    Add-UserPath (Join-Path $root $name)
+    return $true
+  } catch {
+    Write-Host ("Could not download Node from nodejs.org: " + $_.Exception.Message) -ForegroundColor Yellow
+    return $false
+  }
+}
+
 function Install-AgentshopClaude {
   # 1) Node 18+
   if ((Node-Major) -lt 18) {
-    Say "Node 18+ not found - installing Node LTS via winget."
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-      Write-Host "winget is not available. Install Node LTS from https://nodejs.org, then run this command again."
-      return
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+      Say "Node 18+ not found - installing Node LTS via winget."
+      # --source winget: skip the Microsoft Store source, which fails on some machines
+      # (certificate errors behind antivirus/proxy) and then blocks the whole install.
+      winget install -e --id OpenJS.NodeJS.LTS --source winget --accept-source-agreements --accept-package-agreements
+      Refresh-Path
+      $pf = Join-Path $env:ProgramFiles 'nodejs'
+      if ((Node-Major) -lt 18 -and (Test-Path (Join-Path $pf 'node.exe'))) { $env:Path = $env:Path + ';' + $pf }
     }
-    winget install -e --id OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements
-    Refresh-Path
     if ((Node-Major) -lt 18) {
-      Write-Host "Node was installed but is not visible yet. Open a new PowerShell window and run this command again."
+      Say "winget could not install Node - installing it directly instead."
+      Install-NodePortable | Out-Null
+    }
+    if ((Node-Major) -lt 18) {
+      Write-Host ""
+      Write-Host "Could not install Node automatically. Install 'Node.js LTS' (Windows Installer) from https://nodejs.org," -ForegroundColor Yellow
+      Write-Host "then open a new PowerShell window and run this command again." -ForegroundColor Yellow
       return
     }
   }
@@ -339,8 +389,11 @@ function Install-AgentshopClaude {
     Write-Host "npm install failed (exit $LASTEXITCODE). Fix the error above and run this command again."
     return
   }
-  $npmBin = Join-Path $env:APPDATA 'npm'
-  if (($env:Path -split ';') -notcontains $npmBin) { $env:Path = $env:Path + ';' + $npmBin }
+  # Where npm put the claude command (usually %APPDATA%\\npm); keep it on the user PATH so
+  # 'claude' also works in new terminals, e.g. after the portable Node fallback.
+  $npmBin = (& npm.cmd prefix -g) | Select-Object -First 1
+  if (-not $npmBin) { $npmBin = Join-Path $env:APPDATA 'npm' }
+  Add-UserPath $npmBin
   if (Get-Command claude.cmd -ErrorAction SilentlyContinue) {
     Say ("Claude Code " + ((& claude.cmd --version) | Select-Object -First 1))
   } else {
