@@ -438,6 +438,23 @@ ${js}
   Write-Host ("  - API host: " + $ApiHost)
 }
 
-Install-AgentshopClaude
+# A log of the run, so a window that vanishes (antivirus killing PowerShell, a crash) still leaves
+# a trace of how far setup got. Only output is recorded - the script text (with the key) is not.
+$AgentshopLog = Join-Path $env:TEMP 'agentshop-setup.log'
+try { Start-Transcript -Path $AgentshopLog -Force | Out-Null } catch {}
+try {
+  Install-AgentshopClaude
+} catch {
+  Write-Host ("Setup stopped with an error: " + $_.Exception.Message) -ForegroundColor Red
+} finally {
+  try { Stop-Transcript | Out-Null } catch {}
+  Write-Host ("  - Log: " + $AgentshopLog)
+  # Started as 'powershell -Command ...' (Run dialog / Win+R, a shortcut, cmd): that window closes
+  # the moment the script ends, before the customer can read anything - so wait for Enter there.
+  $cl = [Environment]::CommandLine
+  if ($cl -match '\\s[-/](c|co|com|comm|comma|comman|command|e|ec|en|enc|encodedcommand|f|file)\\b' -and $cl -notmatch '\\s[-/](noexit|noni|noninteractive)\\b') {
+    try { Write-Host ""; Read-Host 'Press Enter to close this window' | Out-Null } catch {}
+  }
+}
 `
 }
