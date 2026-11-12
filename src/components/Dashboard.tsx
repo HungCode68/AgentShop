@@ -1,5 +1,5 @@
 import type { UsageData } from '../lib/api'
-import { formatNumber, formatTime, parseServerDate, usageLevel } from '../lib/format'
+import { formatNumber, formatPlanDuration, formatTime, parseServerDate, usageLevel } from '../lib/format'
 import { translateDuration, type KeyInfo } from '../lib/keyInfo'
 import { ActivityIcon, CalendarIcon, CheckIcon, ClockIcon, LayersIcon, RefreshIcon, ShieldIcon, ZapIcon } from './Icons'
 import { StatCard } from './StatCard'
@@ -28,6 +28,7 @@ export function Dashboard({ data, keyInfo, now, lastChecked, loading, onRefresh,
   const used = data.tokensUsed
   // Plan keys (gateway on revidapi): what is usable now also depends on the week, the rental and the daily refill.
   const isPlan = data.plan != null
+  const isTrial = data.plan === 'trial'
   const remaining = isPlan && data.available != null ? data.available : Math.max(0, budget - used)
   const percent = Number.isFinite(data.usagePercentage) ? data.usagePercentage : budget > 0 ? (used / budget) * 100 : 0
   const level = usageLevel(percent)
@@ -71,7 +72,7 @@ export function Dashboard({ data, keyInfo, now, lastChecked, loading, onRefresh,
       <div className="card overview">
         <UsageGauge percent={percent} level={level} />
         <div className="overview__body">
-          <span className="eyebrow">{isPlan ? 'Token đã dùng trong phiên 5 giờ' : 'Token đã dùng trong chu kỳ'}</span>
+          <span className="eyebrow">{isTrial ? 'Token dùng thử đã dùng' : isPlan ? 'Token đã dùng trong phiên 5 giờ' : 'Token đã dùng trong chu kỳ'}</span>
           <div className="overview__numbers">
             <span className="mono overview__used">{formatNumber(used)}</span>
             <span className="overview__sep">/</span>
@@ -99,7 +100,7 @@ export function Dashboard({ data, keyInfo, now, lastChecked, loading, onRefresh,
             icon={<LayersIcon />}
             label="Có thể dùng ngay"
             value={formatNumber(remaining)}
-            hint={data.dailyRefill != null ? `mỗi ngày cộng thêm ${formatNumber(data.dailyRefill)}` : 'token'}
+            hint={data.dailyRefill ? `mỗi ngày cộng thêm ${formatNumber(data.dailyRefill)}` : 'token'}
             tone="accent"
           />
         ) : (
@@ -111,24 +112,33 @@ export function Dashboard({ data, keyInfo, now, lastChecked, loading, onRefresh,
             tone="accent"
           />
         )}
-        <StatCard icon={<ZapIcon />} label={isPlan ? 'Hạn mức phiên' : 'Tổng hạn mức'} value={formatNumber(budget)} hint={isPlan ? 'token / 5 giờ' : 'token / chu kỳ'} />
         <StatCard
-          icon={<ActivityIcon />}
-          label={isPlan ? 'Đã dùng trong tuần' : 'Sessions'}
-          value={formatNumber(data.sessionsUsed)}
-          hint={`trên ${formatNumber(data.maxSessions)} (${sessionPct.toFixed(sessionPct < 1 ? 2 : 1)}%)`}
+          icon={<ZapIcon />}
+          label={isTrial ? 'Hạn mức dùng thử' : isPlan ? 'Hạn mức phiên' : 'Tổng hạn mức'}
+          value={formatNumber(budget)}
+          hint={isTrial ? 'token cho cả thời gian thử' : isPlan ? 'token / 5 giờ' : 'token / chu kỳ'}
         />
+        {isTrial ? (
+          <StatCard icon={<ActivityIcon />} label="Gói" value="Dùng thử" hint={data.planDays ? formatPlanDuration(data.planDays) : undefined} />
+        ) : (
+          <StatCard
+            icon={<ActivityIcon />}
+            label={isPlan ? 'Đã dùng trong tuần' : 'Sessions'}
+            value={formatNumber(data.sessionsUsed)}
+            hint={`trên ${formatNumber(data.maxSessions)} (${sessionPct.toFixed(sessionPct < 1 ? 2 : 1)}%)`}
+          />
+        )}
       </div>
 
       <div className="grid grid--3">
         <TimerCard
           icon={<ClockIcon />}
-          title={isPlan ? 'Phiên 5 giờ đặt lại sau' : 'Chu kỳ hiện tại đặt lại sau'}
+          title={isTrial ? 'Hết thời gian dùng thử sau' : isPlan ? 'Phiên 5 giờ đặt lại sau' : 'Chu kỳ hiện tại đặt lại sau'}
           target={windowEnd}
           emptyText={isPlan ? 'Chưa bắt đầu phiên' : undefined}
           now={now}
         />
-        <TimerCard icon={<CalendarIcon />} title="Giới hạn tuần đặt lại sau" target={weeklyReset} now={now} />
+        <TimerCard icon={<CalendarIcon />} title="Giới hạn tuần đặt lại sau" target={weeklyReset} emptyText={isTrial ? 'Không áp dụng cho gói thử' : undefined} now={now} />
         <TimerCard
           icon={<ShieldIcon />}
           title="Key hết hạn sau"
@@ -162,7 +172,7 @@ function keyExpiryInfo(data: UsageData, keyInfo: KeyInfo | null) {
   const upstream = parseServerDate(data.upstreamExpiresAt)
   const upstreamFirst = upstream !== null && (own === null || upstream.getTime() <= own.getTime())
   const plan = data.plan
-    ? `Gói ${data.tier}${data.planDays ? ` · ${data.planDays} ngày` : ''}`
+    ? `Gói ${data.tier}${data.planDays ? ` · ${formatPlanDuration(data.planDays)}` : ''}`
     : data.upstreamPlan
       ? `Gói ${translateDuration(data.upstreamPlan)}`
       : undefined

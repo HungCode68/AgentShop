@@ -64,6 +64,31 @@ function extractClientKey(req) {
  * (tokensUsed/tokenBudget = current 5-hour session, sessionsUsed/maxSessions = this week).
  */
 export function usageData(record, q) {
+  // A trial has one fixed allowance for its whole (short) duration: show that, not sessions and weeks.
+  if (q.plan.totalCap) {
+    return {
+      tier: q.plan.name,
+      tokensUsed: Math.round(q.totalUsed),
+      tokenBudget: q.plan.totalCap,
+      usagePercentage: (q.totalUsed / q.plan.totalCap) * 100,
+      windowEnd: record.expiresAt,
+      sessionsUsed: Math.round(q.totalUsed),
+      maxSessions: q.plan.totalCap,
+      weeklyLimitResetAt: null,
+      keyName: record.name,
+      keyExpiresAt: record.expiresAt,
+      upstreamExpiresAt: null,
+      upstreamIssuedAt: null,
+      upstreamPlan: null,
+      plan: record.plan,
+      planDays: record.planDays,
+      planStartedAt: record.planStartedAt,
+      available: Math.round(Math.max(0, q.plan.totalCap - q.totalUsed)),
+      dailyRefill: 0,
+      rentalUsed: Math.round(q.totalUsed),
+      rentalCap: q.plan.totalCap,
+    }
+  }
   return {
     tier: q.plan.name,
     tokensUsed: Math.round(q.sessionUsed),
@@ -121,6 +146,7 @@ function limitMessage(check, plan) {
   const at = check.retryAt ? vnTime.format(new Date(check.retryAt)) : null
   switch (check.limit) {
     case 'rental':
+      if (plan.id === 'trial') return `Đã dùng hết ${fmtTokens(plan.totalCap)} dùng thử. Vui lòng liên hệ để mua gói Pro / Max.`
       return `Gói ${plan.name} đã dùng hết hạn mức của thời gian thuê. Vui lòng gia hạn hoặc nâng gói.`
     case 'week':
       return `Đã dùng hết hạn mức tuần của gói ${plan.name} (${fmtTokens(plan.weeklyCap)}). Dùng tiếp được lúc ${at}.`

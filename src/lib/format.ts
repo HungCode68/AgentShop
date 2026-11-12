@@ -43,3 +43,10 @@ export function usageLevel(percent: number): Level {
   if (percent >= 70) return 'warn'
   return 'ok'
 }
+
+/** Rental length for display: whole days as "7 ngày", shorter or uneven ones in hours ("6 giờ", "36 giờ"). */
+export function formatPlanDuration(days: number): string {
+  const hours = Math.round(days * 24)
+  if (hours % 24 === 0) return `${hours / 24} ngày`
+  return hours < 72 ? `${hours} giờ` : `${(hours / 24).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} ngày`
+}

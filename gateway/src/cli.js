@@ -10,9 +10,9 @@ const USAGE = `Cách dùng: node src/cli.js <lệnh> [tham số]
 
   list                                         Liệt kê key
   show <id>                                    Xem chi tiết key
-  create --name <tên> --plan <pro|max5x|max20x> --days <số ngày>
+  create --name <tên> --plan <pro|max5x|max20x|trial> --days <số ngày | 6h>
          [--note <ghi chú>]                    Tạo key mới với gói thuê và in ra key
-  plan <id> <pro|max5x|max20x|none> [số ngày]  Gán gói / gia hạn: bắt đầu thời gian thuê mới từ bây giờ
+  plan <id> <pro|max5x|max20x|trial|none> [số ngày | 6h]  Gán gói / gia hạn: bắt đầu thời gian thuê mới từ bây giờ
                                                (hạn mức dùng tính lại từ 0, hạn dùng = bây giờ + số ngày)
   expires <id> <ngày ISO|never>                Đặt hạn dùng, vd 2026-12-31 hoặc 2026-12-31T23:59:59+07:00
   rename <id> <tên>                            Đổi tên
@@ -90,7 +90,7 @@ try {
       printNewKey(store.create({ name: values.name, plan: values.plan, planDays: values.days, note: values.note }))
       break
     case 'plan': {
-      const value = arg(1, '<pro|max5x|max20x|none>')
+      const value = arg(1, '<pro|max5x|max20x|trial|none>')
       printRecord(store.update(id(), value === 'none' ? { plan: null } : { plan: value, planDays: args[2] }))
       break
     }

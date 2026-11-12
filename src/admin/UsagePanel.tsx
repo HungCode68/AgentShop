@@ -55,13 +55,19 @@ export function UsagePanel({ api, id, onError }: { api: AdminApi; id: number; on
               <RefreshIcon width={16} height={16} className={loading ? 'spin' : undefined} />
             </button>
           </div>
-          <Meter label="Phiên 5 giờ" used={data.tokensUsed} total={data.tokenBudget} resetAt={data.windowEnd} />
-          <Meter label="Trong tuần" used={data.sessionsUsed} total={data.maxSessions} resetAt={data.weeklyLimitResetAt} />
-          {data.rentalCap != null && <Meter label="Cả kỳ thuê" used={data.rentalUsed ?? 0} total={data.rentalCap} resetAt={null} />}
+          {data.plan === 'trial' ? (
+            <Meter label="Dùng thử (cả thời gian)" used={data.tokensUsed} total={data.tokenBudget} resetAt={null} />
+          ) : (
+            <>
+              <Meter label="Phiên 5 giờ" used={data.tokensUsed} total={data.tokenBudget} resetAt={data.windowEnd} />
+              <Meter label="Trong tuần" used={data.sessionsUsed} total={data.maxSessions} resetAt={data.weeklyLimitResetAt} />
+              {data.rentalCap != null && <Meter label="Cả kỳ thuê" used={data.rentalUsed ?? 0} total={data.rentalCap} resetAt={null} />}
+            </>
+          )}
           {data.available != null && (
             <span className="small">
               Có thể dùng ngay: <b className="mono">{formatNumber(data.available)}</b> token
-              {data.dailyRefill != null && <span className="muted"> · mỗi ngày cộng thêm {formatNumber(data.dailyRefill)}</span>}
+              {data.dailyRefill ? <span className="muted"> · mỗi ngày cộng thêm {formatNumber(data.dailyRefill)}</span> : null}
             </span>
           )}
         </>

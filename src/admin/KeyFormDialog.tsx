@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import type { KeyInput, KeyRecord, PlanId } from './api'
-import { DEFAULT_PLANS, interpolatedPrice } from './pricing'
+import { formatPlanDuration } from '../lib/format'
+import { DEFAULT_PLANS, DEFAULT_SETTINGS, interpolatedPrice, unitCost } from './pricing'
 import { InlineError, Modal } from './ui'
 import { formatShort } from './util'
 
@@ -12,23 +13,34 @@ interface Props {
 }
 
 const DAY_PRESETS = [1, 3, 7, 14, 30]
+const HOUR_PRESETS = [1, 3, 6, 12, 24, 72]
 const vnd = new Intl.NumberFormat('vi-VN')
+/** Free trial (see gateway/src/plans.js): 100k converted tokens in total, duration set in hours. */
+const TRIAL = { id: 'trial', name: 'Dùng thử', sessionCap: 100_000, weeklyCap: 100_000 }
+const PLAN_CHOICES = [...DEFAULT_PLANS, TRIAL]
 
 export function KeyFormDialog({ record, onSubmit, onClose }: Props) {
   const editing = !!record
   const [name, setName] = useState(record?.name ?? '')
   const [note, setNote] = useState(record?.note ?? '')
   const [plan, setPlan] = useState<PlanId>(record?.plan ?? 'pro')
-  const [days, setDays] = useState(String(record?.planDays ?? 30))
+  const [days, setDays] = useState(String(record?.plan !== 'trial' && record?.planDays ? record.planDays : 30))
+  const [hours, setHours] = useState(String(record?.plan === 'trial' && record.planDays ? Math.round(record.planDays * 24) : 24))
   // Editing: the plan/days only change when the admin asks for a new rental (it resets usage and expiry).
   const [renew, setRenew] = useState(!editing || !record.plan)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const dayCount = Number(days)
-  const validDays = Number.isInteger(dayCount) && dayCount >= 1 && dayCount <= 366
-  const planDef = DEFAULT_PLANS.find((p) => p.id === plan)
-  const price = planDef && validDays ? interpolatedPrice(planDef, dayCount) : null
+  const isTrial = plan === 'trial'
+  const hourCount = Number(hours)
+  const dayCount = isTrial ? hourCount / 24 : Number(days)
+  const validDays = isTrial
+    ? Number.isInteger(hourCount) && hourCount >= 1 && hourCount <= 366 * 24
+    : Number.isInteger(dayCount) && dayCount >= 1 && dayCount <= 366
+  const planDef = PLAN_CHOICES.find((p) => p.id === plan)
+  const paidPlan = DEFAULT_PLANS.find((p) => p.id === plan)
+  const price = paidPlan && validDays ? interpolatedPrice(paidPlan, dayCount) : null
+  const trialCost = Math.round(TRIAL.sessionCap * unitCost(DEFAULT_SETTINGS))
   const endsAt = validDays ? new Date(Date.now() + dayCount * 86_400_000) : null
 
   function buildInput(): KeyInput | null {
@@ -47,7 +59,7 @@ export function KeyFormDialog({ record, onSubmit, onClose }: Props) {
   async function submit(e: FormEvent) {
     e.preventDefault()
     if (!name.trim()) return setError('Vui lòng nhập tên.')
-    if (renew && !validDays) return setError('Số ngày thuê phải là số nguyên từ 1 đến 366.')
+    if (renew && !validDays) return setError(isTrial ? 'Thời gian dùng thử phải là số giờ nguyên, ít nhất 1 giờ.' : 'Số ngày thuê phải là số nguyên từ 1 đến 366.')
     const input = buildInput()
     if (!input) return onClose()
     setSaving(true)
@@ -88,7 +100,7 @@ export function KeyFormDialog({ record, onSubmit, onClose }: Props) {
           <div className="field">
             <span className="field__label">Gói hiện tại</span>
             <div className="field__current">
-              <b>{record.planName}</b> · {record.planDays} ngày, từ {record.planStartedAt ? formatShort(record.planStartedAt) : '—'}
+              <b>{record.planName}</b> · {record.planDays != null ? formatPlanDuration(record.planDays) : ''}, từ {record.planStartedAt ? formatShort(record.planStartedAt) : '—'}
               {record.expiresAt && <> đến {formatShort(record.expiresAt)}</>}
             </div>
             <label className="checkbox">
@@ -105,19 +117,46 @@ export function KeyFormDialog({ record, onSubmit, onClose }: Props) {
                 Gói <em>*</em>
               </span>
               <div className="seg" role="tablist" aria-label="Chọn gói">
-                {DEFAULT_PLANS.map((p) => (
+                {PLAN_CHOICES.map((p) => (
                   <button key={p.id} type="button" role="tab" aria-selected={plan === p.id} onClick={() => setPlan(p.id as PlanId)}>
                     {p.name}
                   </button>
                 ))}
               </div>
-              {planDef && (
+              {planDef && !isTrial && (
                 <span className="field__hint">
                   Phiên 5 giờ {(planDef.sessionCap / 1e6).toLocaleString('vi-VN')}M token · tuần {(planDef.weeklyCap / 1e6).toLocaleString('vi-VN')}M token
                 </span>
               )}
+              {isTrial && (
+                <span className="field__hint">
+                  Miễn phí cho khách trải nghiệm: tối đa <b>100k token</b> trong suốt thời gian thử. Giá vốn tối đa khoảng {vnd.format(trialCost)}đ / khách.
+                </span>
+              )}
             </div>
 
+            {isTrial ? (
+              <div className="field">
+                <span className="field__label">
+                  Thời gian dùng thử <em>*</em>
+                </span>
+                <span className="pc-input">
+                  <input className="input" inputMode="numeric" value={hours} onChange={(e) => setHours(e.target.value.replace(/[^\d]/g, ''))} />
+                  <span className="pc-input__suffix">giờ</span>
+                </span>
+                <div className="presets">
+                  {HOUR_PRESETS.map((h) => (
+                    <button key={h} type="button" className={`chip${hourCount === h ? ' chip--on' : ''}`} onClick={() => setHours(String(h))}>
+                      {formatPlanDuration(h / 24)}
+                    </button>
+                  ))}
+                </div>
+                {validDays && <span className="field__hint">Hết hạn {endsAt ? formatShort(endsAt.toISOString()) : ''}</span>}
+                {editing && record.plan && (
+                  <div className="field__current field__current--warn">Kỳ mới bắt đầu từ lúc lưu: hạn mức đã dùng được tính lại từ 0.</div>
+                )}
+              </div>
+            ) : (
             <div className="field">
               <span className="field__label">
                 Số ngày thuê <em>*</em>
@@ -145,6 +184,7 @@ export function KeyFormDialog({ record, onSubmit, onClose }: Props) {
                 <div className="field__current field__current--warn">Kỳ thuê mới bắt đầu từ lúc lưu: hạn mức đã dùng được tính lại từ 0.</div>
               )}
             </div>
+            )}
           </>
         )}
 

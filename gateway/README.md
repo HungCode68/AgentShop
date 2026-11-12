@@ -153,6 +153,9 @@ Toàn bộ request AI đi qua **một** key tài khoản revidapi (`REVID_API_KE
 | `pro` | 800k | 2,5M |
 | `max5x` | 2,5M | 10M |
 | `max20x` | 7,5M | 20M |
+| `trial` (Dùng thử) | tổng 100k cho cả thời gian thử | — |
+
+Gói **Dùng thử** miễn phí: tối đa 100k token quy đổi trong suốt thời gian thử, không cộng thêm theo ngày; thời gian đặt theo giờ (`planDays` nhận số lẻ tới 1 giờ, hoặc dạng `"6h"`). Giá vốn tối đa ~3.600đ/khách (100k × 0,036đ).
 
 - Đơn vị là **token quy đổi** theo giá revidapi đo thực tế (12/11/2026): output = 1, input và ghi cache = 0,36, đọc cache = 0,036; Opus 5.5 ×2,4, Opus 5 ×3, Haiku ×0,51. Chỉ cho dùng Claude Sonnet 5.5/5, Opus 5.5/5, Haiku 5.5/4.5; model khác trả 400.
 - Bốn giới hạn, đều phải còn chỗ thì request mới được gửi: phiên 5 giờ; tuần (tính theo kỳ thuê); cả kỳ thuê = max(1 phiên, tuần × số ngày ÷ 7); và số dư cộng dồn (lúc thuê có sẵn 1 phiên, mỗi ngày cộng thêm tuần ÷ 7, tối đa 1 phiên). Hết thì trả 429 `rate_limit_error` với thông báo tiếng Việt và `retry-after`. Số token thật của câu trả lời được trừ sau khi trả lời xong (một request có thể vượt nhẹ).

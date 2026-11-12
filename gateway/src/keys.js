@@ -22,11 +22,18 @@ function normPlan(v) {
   return v
 }
 
+/**
+ * Rental length in days. Fractions are allowed down to one hour (trials), and "6h" means 6 hours.
+ * Stored with minute precision.
+ */
 function normDays(v) {
   if (v === undefined || v === null || v === '') return undefined
-  const n = Number(v)
-  if (!Number.isInteger(n) || n < 1 || n > 366) throw new StoreError(400, 'planDays must be a whole number of days between 1 and 366')
-  return n
+  const text = String(v).trim().toLowerCase()
+  const n = text.endsWith('h') ? Number(text.slice(0, -1)) / 24 : Number(text)
+  if (!Number.isFinite(n) || n < 1 / 24 - 1e-9 || n > 366) {
+    throw new StoreError(400, 'planDays must be between 1 hour ("1h" or 0.0417) and 366 days')
+  }
+  return Math.round(n * 1440) / 1440
 }
 
 function normName(v) {

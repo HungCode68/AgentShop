@@ -23,6 +23,8 @@ export const PLANS = {
   pro: { id: 'pro', name: 'Pro', sessionCap: 800_000, weeklyCap: 2_500_000 },
   max5x: { id: 'max5x', name: 'Max 5x', sessionCap: 2_500_000, weeklyCap: 10_000_000 },
   max20x: { id: 'max20x', name: 'Max 20x', sessionCap: 7_500_000, weeklyCap: 20_000_000 },
+  // Free trial: 100k converted tokens in total for however long the admin sets (hours to days), no refill.
+  trial: { id: 'trial', name: 'Dùng thử', sessionCap: 100_000, weeklyCap: 100_000, totalCap: 100_000 },
 }
 export const PLAN_IDS = Object.keys(PLANS)
 
@@ -39,8 +41,11 @@ export const ALLOWED_MODELS = Object.keys(MODEL_WEIGHTS)
 
 export const TOKEN_WEIGHTS = { input: 0.36, cacheWrite: 0.36, cacheRead: 0.036, output: 1 }
 
-/** Total converted tokens a rental of `days` may use: max(one full session, weekly cap prorated by days). */
-export const allowance = (plan, days) => Math.max(plan.sessionCap, (plan.weeklyCap * days) / 7)
+/**
+ * Total converted tokens a rental of `days` may use: max(one full session, weekly cap prorated by days),
+ * or the plan's fixed total (trial).
+ */
+export const allowance = (plan, days) => plan.totalCap ?? Math.max(plan.sessionCap, (plan.weeklyCap * days) / 7)
 
 /** Converted tokens for one answer's usage block (Anthropic shape) on `model`. */
 export function convertedTokens(usage, model) {

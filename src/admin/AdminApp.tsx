@@ -23,6 +23,7 @@ import { NewKeyDialog } from './NewKeyDialog'
 import { PricingCalculator } from './PricingCalculator'
 import { ConfirmDialog } from './ui'
 import { UsagePanel } from './UsagePanel'
+import { formatPlanDuration } from '../lib/format'
 import { copyLater, formatShort, relativeTime, tokenStorage } from './util'
 import './admin.css'
 
@@ -460,7 +461,7 @@ function KeysView({ api, initialKeys, onUnauthorized }: KeysViewProps) {
                       {k.plan ? (
                         <span className="stack">
                           <b>{k.planName}</b>
-                          <span className="muted small">{k.planDays} ngày</span>
+                          <span className="muted small">{k.planDays != null ? formatPlanDuration(k.planDays) : ''}</span>
                         </span>
                       ) : (
                         <span className="muted">Chưa có gói</span>

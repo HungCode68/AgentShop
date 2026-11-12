@@ -295,6 +295,52 @@ describe('quota limits', () => {
   })
 })
 
+describe('trial plan', () => {
+  test('lasts the hours the admin sets ("6h") and allows 100k tokens in total, no refill', () => {
+    const clock = { t: Date.parse('2026-11-12T00:00:00Z') }
+    const now = () => clock.t
+    const d = openDb(':memory:')
+    const ks = new KeyStore(d, { encryptionKey: ENC_KEY, now })
+    const qs = new QuotaStore(d, { now })
+    const { record } = ks.create({ name: 'Thử', plan: 'trial', planDays: '6h' })
+    assert.equal(record.planName, 'Dùng thử')
+    assert.equal(record.planDays, 0.25)
+    assert.equal(Date.parse(record.expiresAt) - clock.t, 6 * HOUR_MS)
+    assert.equal(qs.snapshot(ks.get(record.id)).rentalCap, 100_000)
+    qs.charge(ks.get(record.id), 100_000)
+    clock.t += 5 * HOUR_MS + 1 // a new session would normally start, and the balance would refill
+    assert.deepEqual(qs.check(ks.get(record.id)), { ok: false, limit: 'rental', retryAt: null })
+    clock.t += HOUR_MS
+    assert.equal(ks.resolve(ks.revealKey(record.id)).ok, false, 'expired after 6 hours')
+  })
+
+  test('the quota page shows the trial as one 100k allowance until it expires', async () => {
+    const { key, record } = store.create({ name: 'Thử', plan: 'trial', planDays: '6h' })
+    quota.charge(store.get(record.id), 1234)
+    const d = (await (await fetch(`${base}/api/proxy/check-usage?key=${key}`)).json()).data
+    assert.equal(d.tier, 'Dùng thử')
+    assert.equal(d.tokensUsed, 1234)
+    assert.equal(d.tokenBudget, 100_000)
+    assert.equal(d.available, 100_000 - 1234)
+    assert.equal(d.dailyRefill, 0)
+    assert.equal(d.windowEnd, d.keyExpiresAt)
+    assert.equal(d.weeklyLimitResetAt, null)
+  })
+
+  test('a longer trial still stops at 100k tokens', () => {
+    assert.equal(allowance(PLANS.trial, 30), 100_000)
+  })
+
+  test('the customer is told the trial is used up', async () => {
+    const { key, record } = store.create({ name: 'Thử', plan: 'trial', planDays: 1 })
+    quota.charge(store.get(record.id), 100_000)
+    const res = await ask(base, key)
+    assert.equal(res.status, 429)
+    assert.match((await res.json()).error.message, /Đã dùng hết 100k token dùng thử/)
+    assert.equal(received.length, 0)
+  })
+})
+
 describe('check-usage', () => {
   test('returns the plan usage in the shape the quota page reads', async () => {
     const { key, record } = planKey('A', 'max5x', 7)
@@ -597,7 +643,9 @@ describe('admin API', () => {
   test('validates plans and days', async () => {
     assert.equal((await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'X', plan: 'ultra' }) })).status, 400)
     assert.equal((await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'X', plan: 'pro', planDays: 0 }) })).status, 400)
-    assert.equal((await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'X', plan: 'pro', planDays: 2.5 }) })).status, 400)
+    assert.equal((await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'X', plan: 'pro', planDays: 0.01 }) })).status, 400, 'under one hour')
+    assert.equal((await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'X', plan: 'pro', planDays: 'abc' }) })).status, 400)
+    assert.equal((await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'X', plan: 'trial', planDays: '0h' }) })).status, 400)
     assert.equal((await admin('/keys', { method: 'POST', body: JSON.stringify({}) })).status, 400)
     assert.equal((await admin('/keys', { method: 'POST', body: 'not json' })).status, 400)
     const noPlan = store.create({ name: 'N' }).record
