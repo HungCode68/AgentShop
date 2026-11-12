@@ -28,6 +28,7 @@ const METERED = 1940 // converted tokens of METERED_USAGE on Sonnet
 
 /** Fake revidapi: records what it received; the test-only `scenario` field in the body steers it. */
 let received = []
+let usageFail = 0 // how many upcoming /v1/usage requests answer 502 (balance fallback test)
 let stallFirst = 0 // how many upcoming /v1/messages requests should stall (hedging tests)
 const upstream = createServer(async (req, res) => {
   const chunks = []
@@ -37,6 +38,11 @@ const upstream = createServer(async (req, res) => {
   received.push({ method: req.method, path: url.pathname, search: url.search, headers: req.headers, body })
 
   if (url.pathname === '/v1/usage') {
+    if (usageFail > 0) {
+      usageFail--
+      res.writeHead(502, { 'content-type': 'text/html' })
+      return res.end('<html>bad gateway</html>')
+    }
     res.writeHead(200, { 'content-type': 'application/json' })
     return res.end(JSON.stringify({ object: 'usage', requests: 7, credits_used: 5.5, credits_remaining: 123.4, last_request_at: '2026-11-12T02:00:00Z' }))
   }
@@ -402,6 +408,27 @@ describe('AI proxy (revidapi)', () => {
     assert.equal(store.list()[0].requestCount, 1)
   })
 
+  test('Chatbox paths without /v1 ({host}/messages, /models) reach the same endpoints', async () => {
+    const { key, record } = planKey()
+    const res = await fetch(`${base}/api/proxy/messages`, {
+      method: 'POST',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: MODEL, stream: true, scenario: 'metered', messages: [] }),
+    })
+    assert.equal(res.status, 200)
+    await res.text()
+    assert.equal(received[0].path, '/v1/messages')
+    assert.equal(quota.snapshot(store.get(record.id)).sessionUsed, METERED, 'metered like any other request')
+
+    const models = await fetch(`${base}/api/proxy/models`, { headers: { 'x-api-key': key } })
+    assert.equal(models.status, 200)
+    assert.ok((await models.json()).data.some((m) => m.id === 'claude-opus-5-5'))
+
+    const ct = await fetch(`${base}/api/proxy/messages/count_tokens`, { method: 'POST', headers: { 'x-api-key': key }, body: JSON.stringify({ model: MODEL, messages: [] }) })
+    assert.equal(ct.status, 200)
+    assert.equal(received.at(-1).path, '/v1/messages/count_tokens')
+  })
+
   test('Authorization: Bearer works the same way', async () => {
     const { key } = planKey()
     const res = await fetch(`${base}/api/proxy/v1/messages`, {
@@ -454,7 +481,7 @@ describe('AI proxy (revidapi)', () => {
 
   test('refuses every other revidapi endpoint (OpenAI format, images…) so nothing bypasses metering', async () => {
     const { key } = planKey()
-    for (const path of ['/v1/chat/completions', '/v1/responses', '/v1/images/generations', '/v2/messages']) {
+    for (const path of ['/v1/chat/completions', '/v1/responses', '/v1/images/generations', '/v2/messages', '/chat/completions', '/v1', '/v1/v1/messages']) {
       const res = await fetch(`${base}/api/proxy${path}`, { method: 'POST', headers: { 'x-api-key': key }, body: '{"model":"claude-sonnet-5-5"}' })
       assert.equal(res.status, 404, path)
     }
@@ -605,6 +632,22 @@ describe('admin API', () => {
     assert.equal((await fetch(`${base}/api/admin/upstream`)).status, 401)
   })
 
+  test('upstream balance: retries once, then serves the last good reading as stale', async () => {
+    usageFail = 1
+    let j = await (await admin('/upstream')).json()
+    assert.equal(j.ok, true, 'one failure is retried')
+    assert.equal(j.creditsRemaining, 123.4)
+    assert.equal(j.stale, false)
+
+    usageFail = 2
+    j = await (await admin('/upstream')).json()
+    assert.equal(j.ok, true, 'two failures fall back to the cached reading')
+    assert.equal(j.stale, true)
+    assert.equal(j.creditsRemaining, 123.4)
+    assert.match(j.error, /HTTP 502/)
+    assert.equal(usageFail, 0)
+  })
+
   test('create with a plan → update plan (new rental) → rotate → delete', async () => {
     const before = Date.now()
     const created = await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'Khách A', plan: 'pro', planDays: 7 }) })
@@ -659,8 +702,10 @@ describe('admin API', () => {
   test('reports the revidapi balance and flags it when low', async () => {
     const res = await admin('/upstream')
     assert.equal(res.status, 200)
-    const b = await res.json()
+    const { fetchedAt, ...b } = await res.json()
+    assert.ok(Math.abs(Date.parse(fetchedAt) - Date.now()) < 5000)
     assert.deepEqual(b, {
+      stale: false,
       ok: true,
       creditsRemaining: 123.4,
       creditsUsedToday: 5.5,

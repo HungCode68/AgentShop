@@ -43,7 +43,19 @@ export interface KeyInput {
 
 /** revidapi account balance, from GET /api/admin/upstream. */
 export type UpstreamBalance =
-  | { ok: true; creditsRemaining: number; creditsUsedToday: number | null; requestsToday: number | null; lastRequestAt: string | null; lowBalance: boolean; lowThreshold: number }
+  | {
+      ok: true
+      creditsRemaining: number
+      creditsUsedToday: number | null
+      requestsToday: number | null
+      lastRequestAt: string | null
+      lowBalance: boolean
+      lowThreshold: number
+      /** When this reading was taken; stale = revidapi failed just now and this is the last good one. */
+      fetchedAt?: string
+      stale?: boolean
+      error?: string
+    }
   | { ok: false; error: string }
 
 export class AdminError extends Error {

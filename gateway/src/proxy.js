@@ -32,9 +32,19 @@ const DROP_RESPONSE_HEADERS = new Set([
  * TTS…) that are not metered by our plans, so everything else is refused.
  */
 const ROUTES = {
-  '/api/proxy/v1/messages': 'messages',
-  '/api/proxy/v1/messages/count_tokens': 'count_tokens',
-  '/api/proxy/v1/models': 'models',
+  '/v1/messages': 'messages',
+  '/v1/messages/count_tokens': 'count_tokens',
+  '/v1/models': 'models',
+}
+
+/**
+ * Upstream path for a client path, or null. Clients differ on whether the API host includes /v1:
+ * Claude Code sends {host}/v1/messages, Chatbox (Claude provider) sends {host}/messages - accept both.
+ */
+function routeOf(pathname) {
+  const p = pathname.replace(/^\/api\/proxy/, '').replace(/\/+$/, '')
+  const path = p.startsWith('/v1/') ? p : '/v1' + p
+  return ROUTES[path] ? { route: ROUTES[path], path } : null
 }
 
 // A request is resent once when the connection was never opened (the upstream cannot have seen or billed it).
@@ -264,8 +274,9 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
   const record = resolved.record
   res.keyId = record.id
 
-  const route = ROUTES[url.pathname.replace(/\/+$/, '')]
-  if (!route) return anthropicError(res, 404, 'not_found_error', `Not found: ${url.pathname.replace(/^\/api\/proxy/, '')}`)
+  const matched = routeOf(url.pathname)
+  if (!matched) return anthropicError(res, 404, 'not_found_error', `Not found: ${url.pathname.replace(/^\/api\/proxy/, '')}`)
+  const { route, path: upstreamPath } = matched
 
   if (route === 'models') {
     if (req.method !== 'GET') return anthropicError(res, 405, 'invalid_request_error', 'Method not allowed')
@@ -333,7 +344,7 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
   }
   headers['x-api-key'] = config.revidApiKey
 
-  const target = config.revidBaseUrl + url.pathname.replace(/^\/api\/proxy/, '') + url.search
+  const target = config.revidBaseUrl + upstreamPath + url.search
   const label = `${req.method} ${url.pathname} key=#${record.id}`
   const clientAbort = new AbortController()
   res.on('close', () => {

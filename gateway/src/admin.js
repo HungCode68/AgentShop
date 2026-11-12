@@ -82,16 +82,33 @@ export async function handleAdmin(req, res, url, { store, quota, config, fetchIm
  * revidapi account balance, from its GET /v1/usage (per account, the same for every key of the account).
  * Never throws: an unreachable revidapi is reported as {ok: false} so /admin can still load.
  */
-async function upstreamBalance({ config, fetchImpl, log }) {
-  if (!config.revidApiKey) return { ok: false, error: 'REVID_API_KEY is not set.' }
+/** Last successful balance per config (one gateway = one config), served when revidapi hiccups. */
+const lastBalance = new WeakMap()
+
+async function fetchBalanceOnce({ config, fetchImpl }) {
   try {
     const res = await fetchImpl(`${config.revidBaseUrl}/v1/usage`, {
       headers: { 'x-api-key': config.revidApiKey, accept: 'application/json' },
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(8_000),
     })
     const j = await res.json().catch(() => null)
-    if (!res.ok || !j || !Number.isFinite(j.credits_remaining)) return { ok: false, error: `revidapi answered HTTP ${res.status}` }
-    return {
+    if (!res.ok || !j || !Number.isFinite(j.credits_remaining)) return { error: `revidapi answered HTTP ${res.status}` }
+    return { data: j }
+  } catch (err) {
+    const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError'
+    return { error: timedOut ? 'revidapi did not answer within 8s' : `revidapi is unreachable (${err?.cause?.code ?? err?.message})` }
+  }
+}
+
+async function upstreamBalance({ config, fetchImpl, log }) {
+  if (!config.revidApiKey) return { ok: false, error: 'REVID_API_KEY is not set.' }
+  // revidapi's usage endpoint occasionally stalls or errors for a moment: retry once, then fall
+  // back to the last good reading (flagged stale) instead of blanking the admin card.
+  let r = await fetchBalanceOnce({ config, fetchImpl })
+  if (r.error) r = await fetchBalanceOnce({ config, fetchImpl })
+  if (r.data) {
+    const j = r.data
+    const out = {
       ok: true,
       creditsRemaining: j.credits_remaining,
       creditsUsedToday: j.credits_used ?? null,
@@ -99,9 +116,14 @@ async function upstreamBalance({ config, fetchImpl, log }) {
       lastRequestAt: j.last_request_at ?? null,
       lowBalance: j.credits_remaining < config.revidLowCredits,
       lowThreshold: config.revidLowCredits,
+      fetchedAt: new Date().toISOString(),
+      stale: false,
     }
-  } catch (err) {
-    log?.(`${new Date().toISOString()} WARN revidapi balance check failed: ${err?.cause?.code ?? err?.message}`)
-    return { ok: false, error: 'revidapi is unreachable' }
+    lastBalance.set(config, out)
+    return out
   }
+  log?.(`${new Date().toISOString()} WARN revidapi balance check failed: ${r.error}`)
+  const prev = lastBalance.get(config)
+  if (prev) return { ...prev, stale: true, error: r.error }
+  return { ok: false, error: r.error }
 }

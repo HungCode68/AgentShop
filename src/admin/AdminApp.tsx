@@ -579,15 +579,22 @@ function UpstreamBalanceCard({ api, onError }: { api: AdminApi; onError: (err: u
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      setData(await api.upstream())
+      const next = await api.upstream()
+      // A failed refresh keeps the last balance on screen (marked stale) instead of blanking it.
+      setData((prev) => (!next.ok && prev?.ok ? { ...prev, stale: true, error: next.error } : next))
     } catch (err) {
-      if (!onError(err)) setData({ ok: false, error: (err as Error).message })
+      if (!onError(err)) {
+        const error = (err as Error).message
+        setData((prev) => (prev?.ok ? { ...prev, stale: true, error } : { ok: false, error }))
+      }
     } finally {
       setLoading(false)
     }
   }, [api, onError])
   useEffect(() => {
     load()
+    const t = setInterval(load, 60_000)
+    return () => clearInterval(t)
   }, [load])
 
   const num = (v: number | null | undefined, digits = 1) => (v == null ? '—' : v.toLocaleString('vi-VN', { maximumFractionDigits: digits }))
@@ -605,6 +612,13 @@ function UpstreamBalanceCard({ api, onError }: { api: AdminApi; onError: (err: u
         <span className="small muted">
           Hôm nay: {num(data.creditsUsedToday)} credit · {num(data.requestsToday, 0)} request
           {data.lowBalance && <b className="balance__warn"> · Sắp hết credit (dưới {num(data.lowThreshold, 0)}), hãy nạp thêm</b>}
+          {data.stale && (
+            <span title={data.error}>
+              {' '}
+              · revid đang phản hồi chậm, số liệu lúc{' '}
+              {data.fetchedAt ? new Date(data.fetchedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : 'trước'}
+            </span>
+          )}
         </span>
       ) : (
         data && <span className="small muted">{data.error}</span>
