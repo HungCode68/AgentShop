@@ -1,6 +1,7 @@
 import { API_BASE, translate, type UsageData } from '../lib/api'
 
 export type KeyStatus = 'active' | 'expired' | 'revoked' | 'unassigned'
+export type PlanId = 'pro' | 'max5x' | 'max20x'
 
 /** Mirrors the gateway's public key record (never contains the full client or upstream key). */
 export interface KeyRecord {
@@ -18,6 +19,11 @@ export interface KeyRecord {
   updatedAt: string
   lastUsedAt: string | null
   requestCount: number
+  /** The rented plan (null = none yet: the key cannot be used). */
+  plan: PlanId | null
+  planName: string | null
+  planDays: number | null
+  planStartedAt: string | null
 }
 
 export interface IssuedKey {
@@ -28,10 +34,17 @@ export interface IssuedKey {
 export interface KeyInput {
   name?: string
   note?: string | null
-  upstreamKey?: string | null
+  /** Setting plan and/or planDays starts a new rental from now (usage resets, expiry = now + days). */
+  plan?: PlanId | null
+  planDays?: number
   expiresAt?: string | null
   status?: 'active' | 'revoked'
 }
+
+/** revidapi account balance, from GET /api/admin/upstream. */
+export type UpstreamBalance =
+  | { ok: true; creditsRemaining: number; creditsUsedToday: number | null; requestsToday: number | null; lastRequestAt: string | null; lowBalance: boolean; lowThreshold: number }
+  | { ok: false; error: string }
 
 export class AdminError extends Error {
   constructor(
@@ -51,6 +64,10 @@ const ERRORS_VI: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/^expiresAt must be/, () => 'Ngày hết hạn không hợp lệ.'],
   [/^Nothing to update$/, () => 'Không có thay đổi nào để lưu.'],
   [/^Key is not linked to an upstream account yet\.$/, () => 'Key chưa được gán key agentshop.'],
+  [/^Key has no plan yet\.$/, () => 'Key chưa có gói.'],
+  [/^plan must be one of/, () => 'Gói không hợp lệ.'],
+  [/^planDays must be/, () => 'Số ngày thuê phải là số nguyên từ 1 đến 366.'],
+  [/^plan is required to set planDays$/, () => 'Cần chọn gói trước khi đặt số ngày thuê.'],
   [/^This key was created before key copying/, () => 'Key này được tạo trước khi có tính năng sao chép. Hãy cấp lại key để có thể sao chép.'],
 ]
 
@@ -88,6 +105,16 @@ export function createAdminApi(token: string) {
     if (res.status === 404 && !body.error) {
       throw new AdminError('Không truy cập được API quản trị. Kiểm tra cấu hình nginx cho /api/admin/.', 404)
     }
+    // The gateway always answers errors with a JSON {error}; an empty 5xx comes from the proxy in front
+    // of it (Vite in dev, nginx in production) when the gateway is not running or not reachable.
+    if (res.status >= 500 && !body.error) {
+      throw new AdminError(
+        import.meta.env.DEV
+          ? `Không kết nối được tới gateway (HTTP ${res.status}). Khi chạy local, mở terminal và chạy: cd gateway && npm start`
+          : `Gateway đang không phản hồi (HTTP ${res.status}). Kiểm tra container quota-gateway trên server.`,
+        res.status,
+      )
+    }
     throw new AdminError(body.error ? translateAdmin(body.error) : `Yêu cầu thất bại (HTTP ${res.status}).`, res.status)
   }
 
@@ -99,6 +126,7 @@ export function createAdminApi(token: string) {
     update: (id: number, patch: KeyInput) => request<KeyRecord>(`/keys/${id}`, json('PATCH', patch)),
     rotate: (id: number) => request<IssuedKey>(`/keys/${id}/rotate`, { method: 'POST' }),
     remove: (id: number) => request<void>(`/keys/${id}`, { method: 'DELETE' }),
+    upstream: () => request<UpstreamBalance>('/upstream'),
     revealKey: (id: number) => request<{ key: string }>(`/keys/${id}/key`).then((r) => r.key),
     usage: (id: number) => request<{ usage: UsageData }>(`/keys/${id}/usage`).then((r) => r.usage),
   }

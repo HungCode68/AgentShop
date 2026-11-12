@@ -15,6 +15,16 @@ export interface UsageData {
   upstreamExpiresAt?: string | null
   upstreamIssuedAt?: string | null
   upstreamPlan?: string | null
+  /** Plan keys (revidapi): the rented plan and how much can be used right now. */
+  plan?: string | null
+  planDays?: number | null
+  planStartedAt?: string | null
+  /** Tokens usable right now (limited by session, week, rental and the daily-refilled balance). */
+  available?: number
+  /** Tokens added to the balance per day. */
+  dailyRefill?: number
+  rentalUsed?: number
+  rentalCap?: number
 }
 
 interface ApiEnvelope {
@@ -34,6 +44,7 @@ const MESSAGE_VI: Record<string, string> = {
   'API key has been revoked.': 'API key đã bị thu hồi. Vui lòng liên hệ quản trị viên.',
   'API key has expired.': 'API key đã hết hạn. Vui lòng liên hệ quản trị viên để gia hạn.',
   'API key is not linked to an upstream account yet.': 'API key chưa được liên kết với tài khoản AI. Vui lòng liên hệ quản trị viên.',
+  'API key has no plan yet. Please contact the administrator.': 'API key chưa được gán gói. Vui lòng liên hệ quản trị viên.',
   'Upstream account is unavailable or expired. Please contact the administrator.':
     'Tài khoản AI phía sau đang không khả dụng hoặc đã hết hạn. Vui lòng liên hệ quản trị viên.',
   'Upstream service is unreachable.': 'Không kết nối được tới nhà cung cấp AI. Vui lòng thử lại sau.',

@@ -12,7 +12,7 @@ const REASON_MESSAGE = {
   invalid: 'API key not found or unassigned.',
   revoked: 'API key has been revoked.',
   expired: 'API key has expired.',
-  unassigned: 'API key is not linked to an upstream account yet.',
+  unassigned: 'API key has no plan yet. Please contact the administrator.',
 }
 
 /**

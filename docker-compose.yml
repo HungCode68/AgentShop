@@ -17,6 +17,11 @@ services:
     environment:
       ADMIN_TOKEN: ${ADMIN_TOKEN:?ADMIN_TOKEN is required (openssl rand -hex 32)}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required (openssl rand -hex 32)}
+      # AI upstream: one revidapi account key for every customer (Jenkins Credentials: GATEWAY_REVID_API_KEY).
+      REVID_API_KEY: ${REVID_API_KEY:?REVID_API_KEY is required (key sk_ of the revidapi account)}
+      REVID_LOW_CREDITS: ${REVID_LOW_CREDITS:-300}
+      HEDGE_AFTER_MS: ${HEDGE_AFTER_MS:-0}
+      MAX_CONCURRENT_PER_KEY: ${MAX_CONCURRENT_PER_KEY:-3}
       UPSTREAM_BASE_URL: ${UPSTREAM_BASE_URL:-https://api.agentshop247.com/api}
       CORS_ORIGINS: ${CORS_ORIGINS:-https://agentshop.id.vn}
       PUBLIC_API_HOST: ${PUBLIC_API_HOST:-https://agentshop.id.vn/api/proxy}

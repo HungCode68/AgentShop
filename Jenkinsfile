@@ -28,6 +28,7 @@ pipeline {
                 withCredentials([
                     string(credentialsId: 'GATEWAY_ADMIN_TOKEN',    variable: 'ADMIN_TOKEN'),
                     string(credentialsId: 'GATEWAY_ENCRYPTION_KEY', variable: 'ENCRYPTION_KEY'),
+                    string(credentialsId: 'GATEWAY_REVID_API_KEY',  variable: 'REVID_API_KEY'),
                 ]) {
                     sh '''
                         # KHÔNG dùng "down -v": volume gateway-data chứa database key.

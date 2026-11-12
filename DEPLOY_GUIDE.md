@@ -40,12 +40,15 @@ openssl rand -hex 32   # dùng cho GATEWAY_ADMIN_TOKEN
 openssl rand -hex 32   # dùng cho GATEWAY_ENCRYPTION_KEY
 ```
 
-Vào **Manage Jenkins → Credentials → System → Global credentials → Add Credentials**, tạo 2 mục kiểu **Secret text**:
+Vào **Manage Jenkins → Credentials → System → Global credentials → Add Credentials**, tạo 3 mục kiểu **Secret text**:
 
 | ID | Giá trị | Ghi chú |
 | --- | --- | --- |
 | `GATEWAY_ADMIN_TOKEN` | chuỗi thứ nhất | Token gọi API quản trị |
-| `GATEWAY_ENCRYPTION_KEY` | chuỗi thứ hai | Khoá mã hoá key `as_` trong DB |
+| `GATEWAY_ENCRYPTION_KEY` | chuỗi thứ hai | Khoá mã hoá key trong DB |
+| `GATEWAY_REVID_API_KEY` | key `sk_...` của tài khoản revidapi | Nguồn AI dùng chung cho mọi khách. **Thiếu mục này thì gateway không khởi động** |
+
+Đổi key revidapi (vd khi bị lộ): tạo key mới trên revidapi.com → sửa giá trị của `GATEWAY_REVID_API_KEY` trong Jenkins → **Build Now**. Khách không phải làm gì.
 
 > ⚠️ **Lưu `GATEWAY_ENCRYPTION_KEY` ở một nơi an toàn khác và không bao giờ đổi nó.** Nếu mất hoặc đổi khoá này, toàn bộ key `as_` đã lưu sẽ không giải mã được và phải gán lại từ đầu.
 
@@ -105,10 +108,11 @@ Tóm tắt cấu hình Nginx:
 ### Cách nhanh: trang quản trị
 
 Mở `https://agentshop.id.vn/admin` (trang check quota không có nút dẫn tới đây) và nhập `GATEWAY_ADMIN_TOKEN`. Trên trang này bạn có thể:
-- Tạo key: điền tên khách, key agentshop `as_...` và hạn dùng. Sau khi tạo sẽ hiện key `ak_...` kèm sẵn link check quota và cấu hình Claude Code để gửi cho khách.
+- Tạo key: điền tên khách, chọn gói (Pro / Max 5x / Max 20x) và số ngày thuê; hạn dùng tự tính, form hiện luôn giá gợi ý. Sau khi tạo sẽ hiện key `ak_...` kèm sẵn link check quota và cấu hình Claude Code để gửi cho khách.
+- Gia hạn / đổi gói: bấm Sửa → tích "Gia hạn / đổi gói" → chọn gói và số ngày. Kỳ thuê mới bắt đầu từ lúc lưu, hạn mức đã dùng tính lại từ 0.
 - Sao chép lại key của khách bất cứ lúc nào bằng nút sao chép ở mỗi dòng (key tạo trước khi có tính năng này cần "Cấp lại key" một lần).
-- Sửa tên, ghi chú, hạn dùng, đổi hoặc bỏ gán key agentshop.
-- Xem hạn mức hiện tại của từng khách.
+- Xem hạn mức của từng khách (phiên 5 giờ, tuần, cả kỳ thuê, có thể dùng ngay) và số dư credit revidapi ở đầu trang (cảnh báo khi dưới `REVID_LOW_CREDITS`, mặc định 300).
+- Tab **Bảng giá**: tính giá, giá vốn và tiền lãi cho số ngày thuê bất kỳ.
 - Cấp lại key (key cũ ngừng hoạt động ngay), thu hồi, kích hoạt lại, xoá.
 
 Mặc định token chỉ được lưu đến khi đóng tab. Chỉ chọn "Ghi nhớ" trên máy riêng của bạn.
@@ -118,11 +122,11 @@ Mặc định token chỉ được lưu đến khi đóng tab. Chỉ chọn "Ghi
 SSH vào server rồi chạy:
 
 ```bash
-docker exec quota-gateway node src/cli.js create --name "Khách A" --upstream as_xxx --expires 2026-12-31
+docker exec quota-gateway node src/cli.js create --name "Khách A" --plan pro --days 30
 # → in ra KEY: ak_... (gửi key này cho client; in lại bằng: reveal <id>)
 
 docker exec quota-gateway node src/cli.js list
-docker exec quota-gateway node src/cli.js assign 1 as_yyy    # key agentshop hết hạn → gán key mới
+docker exec quota-gateway node src/cli.js plan 1 max5x 7    # gia hạn / đổi gói: kỳ thuê mới 7 ngày từ bây giờ
 docker exec quota-gateway node src/cli.js revoke 1
 ```
 

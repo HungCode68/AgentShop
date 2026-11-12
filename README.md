@@ -61,4 +61,10 @@ Lỗi trả về `{"success": false, "message": "...", "data": null}` với HTTP
 - `src/lib/keyInfo.ts`: giải mã JWT trong key `as_` (chỉ dùng khi gọi thẳng agentshop247)
 - `src/styles.css`: giao diện (dark mặc định, tự chuyển light theo hệ thống, responsive)
 - `src/admin/`: trang quản trị key, được tải riêng (lazy) khi mở `/admin` nên không làm nặng trang kiểm tra hạn mức
+- `src/admin/pricing.ts` + `PricingCalculator.tsx`: tab **Bảng giá** trong `/admin` để tính giá gói cho số ngày thuê bất kỳ. Công thức (token quy đổi: output = 1, input/ghi cache = 0,2, đọc cache = 0,02; Opus ×2,3, Haiku ×0,5):
+  - hạn mức thuê d ngày = max(trần phiên 5h, trần tuần × d ÷ 7)
+  - giá vốn tối đa = hạn mức × giá 1 credit revidapi × 645 credit ÷ 1.000.000 (645 credit ≈ 1M token output Sonnet 5.5)
+  - giá đề xuất = nội suy tuyến tính giữa các mốc giá đã chốt (1, 7, 30 ngày); quá mốc cuối thì theo giá/ngày của mốc cuối
+  - giá sàn = giá vốn tối đa × (1 + lãi tối thiểu); lãi xấu nhất = giá − giá vốn tối đa; lãi thường gặp = giá − giá vốn tối đa × tỷ lệ dùng
+  Các chỉnh sửa trên trang chỉ lưu trong trình duyệt; gateway chưa áp dụng các gói này.
 - `src/guide/` + `public/guide/*.png`: trang hướng dẫn người dùng tải Chatbox và điền API Host / API Key (tải riêng khi mở `/huong-dan`). API Host hiển thị được tính từ domain đang mở + `/api/proxy`. Nếu đã ghi nhớ key trên trang kiểm tra (hoặc mở link `/huong-dan?key=ak_...`), trang hiện sẵn nút sao chép key

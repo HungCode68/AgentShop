@@ -17,9 +17,10 @@ import {
   ShieldIcon,
   TrashIcon,
 } from '../components/Icons'
-import { AdminError, createAdminApi, type AdminApi, type IssuedKey, type KeyInput, type KeyRecord, type KeyStatus } from './api'
+import { AdminError, createAdminApi, type AdminApi, type IssuedKey, type KeyInput, type KeyRecord, type KeyStatus, type UpstreamBalance } from './api'
 import { KeyFormDialog } from './KeyFormDialog'
 import { NewKeyDialog } from './NewKeyDialog'
+import { PricingCalculator } from './PricingCalculator'
 import { ConfirmDialog } from './ui'
 import { UsagePanel } from './UsagePanel'
 import { copyLater, formatShort, relativeTime, tokenStorage } from './util'
@@ -32,6 +33,7 @@ export default function AdminApp() {
   const [keys, setKeys] = useState<KeyRecord[]>([])
   const [checking, setChecking] = useState(() => !!tokenStorage.get())
   const [loginError, setLoginError] = useState<string | null>(null)
+  const [view, setView] = useState<'keys' | 'pricing'>('keys')
 
   const login = useCallback(async (value: string, remember: boolean) => {
     setLoginError(null)
@@ -91,7 +93,21 @@ export default function AdminApp() {
 
       <main className="container container--wide">
         {api ? (
-          <KeysView api={api} initialKeys={keys} onUnauthorized={() => logout('Phiên đăng nhập không còn hợp lệ, vui lòng nhập lại admin token.')} />
+          <>
+            <div className="seg admin-tabs" role="tablist" aria-label="Trang quản trị">
+              <button type="button" role="tab" aria-selected={view === 'keys'} onClick={() => setView('keys')}>
+                API key
+              </button>
+              <button type="button" role="tab" aria-selected={view === 'pricing'} onClick={() => setView('pricing')}>
+                Bảng giá
+              </button>
+            </div>
+            {/* KeysView stays mounted so switching tabs keeps its list, filters and search. */}
+            <div hidden={view !== 'keys'}>
+              <KeysView api={api} initialKeys={keys} onUnauthorized={() => logout('Phiên đăng nhập không còn hợp lệ, vui lòng nhập lại admin token.')} />
+            </div>
+            {view === 'pricing' && <PricingCalculator />}
+          </>
         ) : checking ? (
           <div className="login-wait">
             <span className="spinner spinner--accent" />
@@ -170,7 +186,7 @@ const STATUS: Record<KeyStatus, { label: string; tone: string }> = {
   active: { label: 'Hoạt động', tone: 'ok' },
   expired: { label: 'Hết hạn', tone: 'warn' },
   revoked: { label: 'Đã thu hồi', tone: 'danger' },
-  unassigned: { label: 'Chưa gán', tone: 'muted' },
+  unassigned: { label: 'Chưa có gói', tone: 'muted' },
 }
 const FILTERS: (KeyStatus | 'all')[] = ['all', 'active', 'expired', 'revoked', 'unassigned']
 
@@ -251,7 +267,7 @@ function KeysView({ api, initialKeys, onUnauthorized }: KeysViewProps) {
     return keys.filter(
       (k) =>
         (filter === 'all' || k.effectiveStatus === filter) &&
-        (!q || [k.name, k.note, k.keyPrefix, k.upstreamKey, `#${k.id}`].some((v) => v?.toLowerCase().includes(q))),
+        (!q || [k.name, k.note, k.keyPrefix, k.planName, `#${k.id}`].some((v) => v?.toLowerCase().includes(q))),
     )
   }, [keys, query, filter])
 
@@ -338,7 +354,7 @@ function KeysView({ api, initialKeys, onUnauthorized }: KeysViewProps) {
       danger: true,
       message: (
         <>
-          Xoá hẳn key của <b>{k.name}</b> (#{k.id}). Thao tác này không hoàn tác được; key agentshop đang gán sẽ được giải phóng để gán cho khách khác.
+          Xoá hẳn key của <b>{k.name}</b> (#{k.id}) cùng số liệu dùng của key. Thao tác này không hoàn tác được.
         </>
       ),
       run: async () => {
@@ -356,7 +372,7 @@ function KeysView({ api, initialKeys, onUnauthorized }: KeysViewProps) {
       <div className="admin__head">
         <div>
           <h1>API key của khách</h1>
-          <p className="muted small">Mỗi key ak_ được ánh xạ tới một key agentshop. Bấm biểu tượng sao chép ở mỗi dòng để lấy lại key của khách khi cần.</p>
+          <p className="muted small">Mỗi key ak_ thuê một gói (Pro / Max 5x / Max 20x) theo số ngày; gateway tự đếm hạn mức. Bấm biểu tượng sao chép ở mỗi dòng để lấy lại key của khách khi cần.</p>
         </div>
         <div className="admin__actions">
           <button type="button" className="btn btn--ghost" onClick={refresh} disabled={loading}>
@@ -369,6 +385,8 @@ function KeysView({ api, initialKeys, onUnauthorized }: KeysViewProps) {
           </button>
         </div>
       </div>
+
+      <UpstreamBalanceCard api={api} onError={handleAuth} />
 
       <div className="admin__filters">
         <div className="seg" role="tablist" aria-label="Lọc theo trạng thái">
@@ -414,7 +432,7 @@ function KeysView({ api, initialKeys, onUnauthorized }: KeysViewProps) {
               <tr>
                 <th>Khách</th>
                 <th>Key</th>
-                <th>Key agentshop</th>
+                <th>Gói</th>
                 <th>Trạng thái</th>
                 <th>Hết hạn</th>
                 <th>Dùng gần nhất</th>
@@ -438,7 +456,16 @@ function KeysView({ api, initialKeys, onUnauthorized }: KeysViewProps) {
                     <td data-label="Key">
                       <code>{k.keyPrefix}</code>
                     </td>
-                    <td data-label="Key agentshop">{k.upstreamKey ? <code>{k.upstreamKey}</code> : <span className="muted">Chưa gán</span>}</td>
+                    <td data-label="Gói">
+                      {k.plan ? (
+                        <span className="stack">
+                          <b>{k.planName}</b>
+                          <span className="muted small">{k.planDays} ngày</span>
+                        </span>
+                      ) : (
+                        <span className="muted">Chưa có gói</span>
+                      )}
+                    </td>
                     <td data-label="Trạng thái">
                       <span className={`badge badge--${st.tone}`}>{st.label}</span>
                     </td>
@@ -467,8 +494,8 @@ function KeysView({ api, initialKeys, onUnauthorized }: KeysViewProps) {
                         type="button"
                         className={`icon-btn${open ? ' is-active' : ''}`}
                         onClick={() => toggleUsage(k.id)}
-                        disabled={!k.upstreamKey}
-                        title={k.upstreamKey ? 'Xem hạn mức' : 'Chưa gán key agentshop'}
+                        disabled={!k.plan}
+                        title={k.plan ? 'Xem hạn mức' : 'Key chưa có gói'}
                         aria-label="Xem hạn mức"
                         aria-expanded={open}
                       >
@@ -539,5 +566,51 @@ function KeysView({ api, initialKeys, onUnauthorized }: KeysViewProps) {
         </div>
       )}
     </section>
+  )
+}
+
+/* ------------------------------------------------------------------ revidapi balance */
+
+/** Credits left on the revidapi account that serves every customer; warns when low. */
+function UpstreamBalanceCard({ api, onError }: { api: AdminApi; onError: (err: unknown) => boolean }) {
+  const [data, setData] = useState<UpstreamBalance | null>(null)
+  const [loading, setLoading] = useState(false)
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      setData(await api.upstream())
+    } catch (err) {
+      if (!onError(err)) setData({ ok: false, error: (err as Error).message })
+    } finally {
+      setLoading(false)
+    }
+  }, [api, onError])
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const num = (v: number | null | undefined, digits = 1) => (v == null ? '—' : v.toLocaleString('vi-VN', { maximumFractionDigits: digits }))
+  return (
+    <div className={`card balance${data?.ok && data.lowBalance ? ' balance--low' : ''}`}>
+      <div className="balance__main">
+        <span className="small muted">Số dư revidapi</span>
+        {data?.ok ? (
+          <span className="balance__value mono">{num(data.creditsRemaining)} credit</span>
+        ) : (
+          <span className="balance__value muted">{data ? 'Không đọc được' : '…'}</span>
+        )}
+      </div>
+      {data?.ok ? (
+        <span className="small muted">
+          Hôm nay: {num(data.creditsUsedToday)} credit · {num(data.requestsToday, 0)} request
+          {data.lowBalance && <b className="balance__warn"> · Sắp hết credit (dưới {num(data.lowThreshold, 0)}), hãy nạp thêm</b>}
+        </span>
+      ) : (
+        data && <span className="small muted">{data.error}</span>
+      )}
+      <button type="button" className="icon-btn" onClick={load} disabled={loading} title="Tải lại số dư" aria-label="Tải lại số dư">
+        <RefreshIcon width={16} height={16} className={loading ? 'spin' : undefined} />
+      </button>
+    </div>
   )
 }

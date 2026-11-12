@@ -1,4 +1,5 @@
 import { decrypt, encrypt, generateKey, sha256 } from './crypto.js'
+import { DAY_MS, PLAN_IDS, PLANS } from './plans.js'
 
 export class StoreError extends Error {
   constructor(status, message) {
@@ -10,7 +11,23 @@ export class StoreError extends Error {
 const nowIso = () => new Date().toISOString()
 const maskKey = (k) => (k.length <= 12 ? `${k.slice(0, 3)}…` : `${k.slice(0, 6)}…${k.slice(-4)}`)
 
-const PATCHABLE = new Set(['name', 'note', 'upstreamKey', 'expiresAt', 'status'])
+const PATCHABLE = new Set(['name', 'note', 'upstreamKey', 'expiresAt', 'status', 'plan', 'planDays'])
+const DEFAULT_PLAN_DAYS = 30
+
+/** undefined = leave unchanged, null = remove the plan. */
+function normPlan(v) {
+  if (v === undefined) return undefined
+  if (v === null || v === '') return null
+  if (!PLAN_IDS.includes(v)) throw new StoreError(400, 'plan must be one of: ' + PLAN_IDS.join(', '))
+  return v
+}
+
+function normDays(v) {
+  if (v === undefined || v === null || v === '') return undefined
+  const n = Number(v)
+  if (!Number.isInteger(n) || n < 1 || n > 366) throw new StoreError(400, 'planDays must be a whole number of days between 1 and 366')
+  return n
+}
 
 function normName(v) {
   if (typeof v !== 'string' || !v.trim() || v.trim().length > 100) {
@@ -70,7 +87,7 @@ export function decodeUpstreamKey(key) {
 function effectiveStatus(row, now = Date.now()) {
   if (row.status === 'revoked') return 'revoked'
   if (row.expires_at && Date.parse(row.expires_at) <= now) return 'expired'
-  if (!row.upstream_key_enc) return 'unassigned'
+  if (!row.plan) return 'unassigned'
   return 'active'
 }
 
@@ -90,6 +107,10 @@ function toPublic(row) {
     updatedAt: row.updated_at,
     lastUsedAt: row.last_used_at,
     requestCount: row.request_count,
+    plan: row.plan ?? null,
+    planName: PLANS[row.plan]?.name ?? null,
+    planDays: row.plan_days ?? null,
+    planStartedAt: row.plan_started_at ?? null,
   }
 }
 
@@ -97,11 +118,41 @@ export class KeyStore {
   #db
   #encKey
   #prefix
+  #now
 
-  constructor(db, { encryptionKey, keyPrefix = 'ak_' }) {
+  constructor(db, { encryptionKey, keyPrefix = 'ak_', now = () => Date.now() }) {
     this.#db = db
     this.#encKey = encryptionKey
     this.#prefix = keyPrefix
+    this.#now = now
+    this.#migrateToPlans()
+  }
+
+  /**
+   * One-off, when the gateway moved from agentshop to revidapi: every key that was linked to an agentshop key
+   * gets the Pro plan for the days it had left (the earlier of its own expiry and the agentshop key's), so
+   * customers keep working after the deploy. The admin then adjusts plans in /admin. Runs once per database.
+   */
+  #migrateToPlans() {
+    const done = this.#db.prepare("SELECT value FROM gateway_meta WHERE key = 'plans_migrated_at'").get()
+    if (done) return
+    const now = this.#now()
+    const rows = this.#db.prepare('SELECT * FROM api_keys WHERE plan IS NULL AND upstream_key_enc IS NOT NULL').all()
+    for (const row of rows) {
+      let upstreamEnd = null
+      try {
+        upstreamEnd = Date.parse(decodeUpstreamKey(decrypt(row.upstream_key_enc, this.#encKey))?.expiresAt ?? '') || null
+      } catch {
+        /* undecryptable or not a JWT: fall back to the key's own expiry */
+      }
+      const ends = [row.expires_at ? Date.parse(row.expires_at) : null, upstreamEnd].filter((t) => Number.isFinite(t))
+      const end = ends.length ? Math.min(...ends) : now + DEFAULT_PLAN_DAYS * DAY_MS
+      const days = Math.min(366, Math.max(1, Math.ceil((end - now) / DAY_MS)))
+      this.#db
+        .prepare('UPDATE api_keys SET plan = ?, plan_days = ?, plan_started_at = ?, expires_at = ?, updated_at = ? WHERE id = ?')
+        .run('pro', days, new Date(now).toISOString(), new Date(end).toISOString(), nowIso(), row.id)
+    }
+    this.#db.prepare("INSERT INTO gateway_meta (key, value) VALUES ('plans_migrated_at', ?)").run(new Date(now).toISOString())
   }
 
   list() {
@@ -112,10 +163,14 @@ export class KeyStore {
     return toPublic(this.#row(id))
   }
 
-  create({ name, note, upstreamKey, expiresAt } = {}) {
+  create({ name, note, upstreamKey, expiresAt, plan, planDays } = {}) {
     const n = normName(name)
     const up = normUpstream(upstreamKey) ?? null
-    const exp = normExpiresAt(expiresAt) ?? null
+    const p = normPlan(plan) ?? null
+    const days = p ? normDays(planDays) ?? DEFAULT_PLAN_DAYS : null
+    const started = p ? this.#now() : null
+    // A plan rental ends after its days; an explicit expiresAt still wins.
+    const exp = normExpiresAt(expiresAt) ?? (p ? new Date(started + days * DAY_MS).toISOString() : null)
     const fp = up ? sha256(up) : null
     if (fp) this.#assertUpstreamFree(fp)
 
@@ -124,12 +179,14 @@ export class KeyStore {
     const { lastInsertRowid } = this.#db
       .prepare(
         `INSERT INTO api_keys
-           (name, note, key_hash, key_prefix, key_enc, upstream_key_enc, upstream_fingerprint, upstream_hint, expires_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (name, note, key_hash, key_prefix, key_enc, upstream_key_enc, upstream_fingerprint, upstream_hint, expires_at, created_at, updated_at,
+            plan, plan_days, plan_started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         n, normNote(note), sha256(key), this.#displayPrefix(key), encrypt(key, this.#encKey),
         up ? encrypt(up, this.#encKey) : null, fp, up ? maskKey(up) : null, exp, ts, ts,
+        p, days, started === null ? null : new Date(started).toISOString(),
       )
     return { key, record: this.get(Number(lastInsertRowid)) }
   }
@@ -161,6 +218,24 @@ export class KeyStore {
       set('upstream_hint', maskKey(up))
     }
     const exp = normExpiresAt(patch.expiresAt)
+    const p = normPlan(patch.plan)
+    const days = normDays(patch.planDays)
+    if (p === null) {
+      set('plan', null)
+      set('plan_days', null)
+      set('plan_started_at', null)
+    } else if (p !== undefined || days !== undefined) {
+      // Changing the plan or the number of days starts a new rental from now, with fresh usage counters.
+      const row = this.#row(id)
+      const plan = p ?? row.plan
+      if (!plan) throw new StoreError(400, 'plan is required to set planDays')
+      const d = days ?? row.plan_days ?? DEFAULT_PLAN_DAYS
+      const started = this.#now()
+      set('plan', plan)
+      set('plan_days', d)
+      set('plan_started_at', new Date(started).toISOString())
+      if (exp === undefined) set('expires_at', new Date(started + d * DAY_MS).toISOString())
+    }
     if (exp !== undefined) set('expires_at', exp)
     if (patch.status !== undefined) {
       if (patch.status !== 'active' && patch.status !== 'revoked') throw new StoreError(400, "status must be 'active' or 'revoked'")
@@ -185,6 +260,7 @@ export class KeyStore {
 
   remove(id) {
     this.#row(id)
+    this.#db.prepare('DELETE FROM key_usage WHERE key_id = ?').run(id)
     this.#db.prepare('DELETE FROM api_keys WHERE id = ?').run(id)
   }
 
@@ -196,9 +272,9 @@ export class KeyStore {
     if (typeof clientKey !== 'string' || !clientKey.startsWith(this.#prefix)) return { ok: false, reason: 'invalid' }
     const row = this.#db.prepare('SELECT * FROM api_keys WHERE key_hash = ?').get(sha256(clientKey))
     if (!row) return { ok: false, reason: 'invalid' }
-    const status = effectiveStatus(row)
+    const status = effectiveStatus(row, this.#now())
     if (status !== 'active') return { ok: false, reason: status }
-    return { ok: true, record: toPublic(row), upstreamKey: decrypt(row.upstream_key_enc, this.#encKey) }
+    return { ok: true, record: toPublic(row) }
   }
 
   /** The full client key, for the admin to copy again; null for keys created before key copying existed. */

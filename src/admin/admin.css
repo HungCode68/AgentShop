@@ -676,3 +676,157 @@ textarea {
     flex: 1;
   }
 }
+
+/* ---------- Admin tabs + pricing calculator (/admin → Bảng giá) ---------- */
+.admin-tabs {
+  margin-bottom: 20px;
+  align-self: flex-start;
+}
+.pc {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.pc-card {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.pc-h2 {
+  font-size: 16px;
+  font-weight: 700;
+}
+.pc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+.pc-input {
+  position: relative;
+  display: block;
+}
+.pc-input .input {
+  padding-right: 64px;
+}
+.pc-input__suffix {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12.5px;
+  color: var(--text-3);
+  pointer-events: none;
+}
+.chip--on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.pc-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.pc-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.pc-tile__label {
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.pc-tile__value {
+  font-family: var(--mono);
+  font-size: 19px;
+  font-weight: 600;
+}
+.pc-tile__sub {
+  font-size: 12px;
+  color: var(--text-3);
+}
+.pc-tile--ok .pc-tile__value {
+  color: var(--ok);
+}
+.pc-tile--danger {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  background: var(--danger-soft);
+}
+.pc-tile--danger .pc-tile__value {
+  color: var(--danger);
+}
+.pc-tile--muted .pc-tile__value {
+  color: var(--text-2);
+}
+.pc-table tbody tr {
+  cursor: pointer;
+}
+.pc-table td {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pc-row--on td {
+  background: var(--accent-soft);
+}
+.pc-row--loss td {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.pc-plans {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.pc-plan h3 {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.pc-formula summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.pc-formula ul {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13.5px;
+  color: var(--text-2);
+}
+
+/* ---------- revidapi balance card ---------- */
+.balance {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+  margin-bottom: 16px;
+}
+.balance__main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 160px;
+}
+.balance__value {
+  font-size: 20px;
+  font-weight: 600;
+}
+.balance .icon-btn {
+  margin-left: auto;
+}
+.balance--low {
+  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+  background: var(--warn-soft);
+}
+.balance__warn {
+  color: var(--warn);
+}

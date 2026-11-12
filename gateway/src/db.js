@@ -32,5 +32,35 @@ export function openDb(path) {
   const columns = db.prepare('PRAGMA table_info(api_keys)').all().map((c) => c.name)
   if (!columns.includes('key_enc')) db.exec('ALTER TABLE api_keys ADD COLUMN key_enc TEXT')
 
+  // Plans (revidapi upstream): which plan a key rents, for how many days, and since when.
+  if (!columns.includes('plan')) {
+    db.exec(`
+      ALTER TABLE api_keys ADD COLUMN plan TEXT;            -- pro | max5x | max20x, NULL = no plan yet
+      ALTER TABLE api_keys ADD COLUMN plan_days INTEGER;
+      ALTER TABLE api_keys ADD COLUMN plan_started_at TEXT; -- ISO 8601 UTC; a new rental starts usage from zero
+    `)
+  }
+
+  db.exec(`
+    -- Usage counters per key for the current rental (see quota.js).
+    CREATE TABLE IF NOT EXISTS key_usage (
+      key_id           INTEGER PRIMARY KEY,
+      plan_started_at  TEXT    NOT NULL,
+      session_start    INTEGER,
+      session_used     REAL    NOT NULL DEFAULT 0,
+      week_index       INTEGER NOT NULL DEFAULT 0,
+      week_used        REAL    NOT NULL DEFAULT 0,
+      balance          REAL    NOT NULL,
+      balance_at       INTEGER NOT NULL,
+      total_used       REAL    NOT NULL DEFAULT 0,
+      updated_at       TEXT    NOT NULL
+    );
+    -- One-off markers, e.g. that the agentshop → plan migration already ran.
+    CREATE TABLE IF NOT EXISTS gateway_meta (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `)
+
   return db
 }

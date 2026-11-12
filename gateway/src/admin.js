@@ -1,19 +1,21 @@
 import { safeEqual } from './crypto.js'
 import { readJson, sendJson } from './http.js'
-import { fetchUpstreamUsage } from './proxy.js'
+import { usageData } from './proxy.js'
 
 /**
  * Admin API (Authorization: Bearer <ADMIN_TOKEN>), used by the /admin page and by curl.
  *   GET    /api/admin/keys              list keys
- *   POST   /api/admin/keys              create   {name, upstreamKey?, expiresAt?, note?}
+ *   POST   /api/admin/keys              create   {name, plan?, planDays?, expiresAt?, note?}
  *   GET    /api/admin/keys/:id          show
- *   PATCH  /api/admin/keys/:id          update   {name?, note?, upstreamKey?, expiresAt?, status?}
+ *   PATCH  /api/admin/keys/:id          update   {name?, note?, plan?, planDays?, expiresAt?, status?}
+ *                                       (plan/planDays start a new rental from now: usage resets, expiry = now + days)
  *   POST   /api/admin/keys/:id/rotate   issue a new client key (old one stops working)
- *   GET    /api/admin/keys/:id/usage    provider usage of the mapped upstream key
+ *   GET    /api/admin/keys/:id/usage    plan usage of the key (session, week, rental, available)
+ *   GET    /api/admin/upstream          revidapi account balance (credits) and today's use
  *   GET    /api/admin/keys/:id/key      the full client key, to copy it again
  *   DELETE /api/admin/keys/:id          delete
  */
-export async function handleAdmin(req, res, url, { store, config, fetchImpl, log }) {
+export async function handleAdmin(req, res, url, { store, quota, config, fetchImpl, log }) {
   // Responses carry key material (new keys) — never let a browser or proxy cache them.
   res.setHeader('cache-control', 'no-store')
 
@@ -23,6 +25,10 @@ export async function handleAdmin(req, res, url, { store, config, fetchImpl, log
   }
 
   const parts = url.pathname.replace(/^\/api\/admin\/?/, '').split('/').filter(Boolean)
+  if (parts[0] === 'upstream' && parts.length === 1) {
+    if (req.method !== 'GET') return sendJson(res, 405, { error: 'Method not allowed' })
+    return sendJson(res, 200, await upstreamBalance({ config, fetchImpl, log }))
+  }
   if (parts[0] !== 'keys' || parts.length > 3) return sendJson(res, 404, { error: 'Not found' })
 
   const method = req.method
@@ -54,11 +60,9 @@ export async function handleAdmin(req, res, url, { store, config, fetchImpl, log
     }
     if (parts[2] === 'usage') {
       if (method !== 'GET') return notAllowed()
-      const upstreamKey = store.upstreamKeyOf(id)
-      if (!upstreamKey) return sendJson(res, 409, { error: 'Key is not linked to an upstream account yet.' })
-      const usage = await fetchUpstreamUsage(upstreamKey, { config, fetchImpl, log })
-      if (!usage.ok) return sendJson(res, 502, { error: usage.message })
-      return sendJson(res, 200, { usage: usage.data })
+      const record = store.get(id)
+      if (!record.plan) return sendJson(res, 409, { error: 'Key has no plan yet.' })
+      return sendJson(res, 200, { usage: usageData(record, quota.snapshot(record)) })
     }
     return sendJson(res, 404, { error: 'Not found' })
   }
@@ -67,8 +71,37 @@ export async function handleAdmin(req, res, url, { store, config, fetchImpl, log
   if (method === 'PATCH') return sendJson(res, 200, store.update(id, await readJson(req)))
   if (method === 'DELETE') {
     store.remove(id)
+    quota.remove(id)
     res.writeHead(204).end()
     return
   }
   return notAllowed()
+}
+
+/**
+ * revidapi account balance, from its GET /v1/usage (per account, the same for every key of the account).
+ * Never throws: an unreachable revidapi is reported as {ok: false} so /admin can still load.
+ */
+async function upstreamBalance({ config, fetchImpl, log }) {
+  if (!config.revidApiKey) return { ok: false, error: 'REVID_API_KEY is not set.' }
+  try {
+    const res = await fetchImpl(`${config.revidBaseUrl}/v1/usage`, {
+      headers: { 'x-api-key': config.revidApiKey, accept: 'application/json' },
+      signal: AbortSignal.timeout(10_000),
+    })
+    const j = await res.json().catch(() => null)
+    if (!res.ok || !j || !Number.isFinite(j.credits_remaining)) return { ok: false, error: `revidapi answered HTTP ${res.status}` }
+    return {
+      ok: true,
+      creditsRemaining: j.credits_remaining,
+      creditsUsedToday: j.credits_used ?? null,
+      requestsToday: j.requests ?? null,
+      lastRequestAt: j.last_request_at ?? null,
+      lowBalance: j.credits_remaining < config.revidLowCredits,
+      lowThreshold: config.revidLowCredits,
+    }
+  } catch (err) {
+    log?.(`${new Date().toISOString()} WARN revidapi balance check failed: ${err?.cause?.code ?? err?.message}`)
+    return { ok: false, error: 'revidapi is unreachable' }
+  }
 }

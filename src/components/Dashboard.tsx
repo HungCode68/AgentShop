@@ -26,7 +26,9 @@ const STATUS_TEXT = {
 export function Dashboard({ data, keyInfo, now, lastChecked, loading, onRefresh, autoRefresh, onAutoRefreshChange }: Props) {
   const budget = data.tokenBudget
   const used = data.tokensUsed
-  const remaining = Math.max(0, budget - used)
+  // Plan keys (gateway on revidapi): what is usable now also depends on the week, the rental and the daily refill.
+  const isPlan = data.plan != null
+  const remaining = isPlan && data.available != null ? data.available : Math.max(0, budget - used)
   const percent = Number.isFinite(data.usagePercentage) ? data.usagePercentage : budget > 0 ? (used / budget) * 100 : 0
   const level = usageLevel(percent)
   const sessionPct = data.maxSessions > 0 ? (data.sessionsUsed / data.maxSessions) * 100 : 0
@@ -69,7 +71,7 @@ export function Dashboard({ data, keyInfo, now, lastChecked, loading, onRefresh,
       <div className="card overview">
         <UsageGauge percent={percent} level={level} />
         <div className="overview__body">
-          <span className="eyebrow">Token đã dùng trong chu kỳ</span>
+          <span className="eyebrow">{isPlan ? 'Token đã dùng trong phiên 5 giờ' : 'Token đã dùng trong chu kỳ'}</span>
           <div className="overview__numbers">
             <span className="mono overview__used">{formatNumber(used)}</span>
             <span className="overview__sep">/</span>
@@ -92,24 +94,40 @@ export function Dashboard({ data, keyInfo, now, lastChecked, loading, onRefresh,
       </div>
 
       <div className="grid grid--3">
-        <StatCard
-          icon={<LayersIcon />}
-          label="Còn lại"
-          value={formatNumber(remaining)}
-          hint={`${Math.max(0, 100 - percent).toFixed(2)}% hạn mức`}
-          tone="accent"
-        />
-        <StatCard icon={<ZapIcon />} label="Tổng hạn mức" value={formatNumber(budget)} hint="token / chu kỳ" />
+        {isPlan ? (
+          <StatCard
+            icon={<LayersIcon />}
+            label="Có thể dùng ngay"
+            value={formatNumber(remaining)}
+            hint={data.dailyRefill != null ? `mỗi ngày cộng thêm ${formatNumber(data.dailyRefill)}` : 'token'}
+            tone="accent"
+          />
+        ) : (
+          <StatCard
+            icon={<LayersIcon />}
+            label="Còn lại"
+            value={formatNumber(remaining)}
+            hint={`${Math.max(0, 100 - percent).toFixed(2)}% hạn mức`}
+            tone="accent"
+          />
+        )}
+        <StatCard icon={<ZapIcon />} label={isPlan ? 'Hạn mức phiên' : 'Tổng hạn mức'} value={formatNumber(budget)} hint={isPlan ? 'token / 5 giờ' : 'token / chu kỳ'} />
         <StatCard
           icon={<ActivityIcon />}
-          label="Sessions"
+          label={isPlan ? 'Đã dùng trong tuần' : 'Sessions'}
           value={formatNumber(data.sessionsUsed)}
           hint={`trên ${formatNumber(data.maxSessions)} (${sessionPct.toFixed(sessionPct < 1 ? 2 : 1)}%)`}
         />
       </div>
 
       <div className="grid grid--3">
-        <TimerCard icon={<ClockIcon />} title="Chu kỳ hiện tại đặt lại sau" target={windowEnd} now={now} />
+        <TimerCard
+          icon={<ClockIcon />}
+          title={isPlan ? 'Phiên 5 giờ đặt lại sau' : 'Chu kỳ hiện tại đặt lại sau'}
+          target={windowEnd}
+          emptyText={isPlan ? 'Chưa bắt đầu phiên' : undefined}
+          now={now}
+        />
         <TimerCard icon={<CalendarIcon />} title="Giới hạn tuần đặt lại sau" target={weeklyReset} now={now} />
         <TimerCard
           icon={<ShieldIcon />}
@@ -143,11 +161,15 @@ function keyExpiryInfo(data: UsageData, keyInfo: KeyInfo | null) {
   const own = parseServerDate(data.keyExpiresAt)
   const upstream = parseServerDate(data.upstreamExpiresAt)
   const upstreamFirst = upstream !== null && (own === null || upstream.getTime() <= own.getTime())
-  const plan = data.upstreamPlan ? `Gói ${translateDuration(data.upstreamPlan)}` : undefined
+  const plan = data.plan
+    ? `Gói ${data.tier}${data.planDays ? ` · ${data.planDays} ngày` : ''}`
+    : data.upstreamPlan
+      ? `Gói ${translateDuration(data.upstreamPlan)}`
+      : undefined
   return {
     viaGateway,
     target: upstreamFirst ? upstream : own,
-    start: upstreamFirst ? parseServerDate(data.upstreamIssuedAt) : null,
+    start: upstreamFirst ? parseServerDate(data.upstreamIssuedAt) : parseServerDate(data.planStartedAt ?? null),
     note: [data.keyName, plan].filter(Boolean).join(' · ') || undefined,
   }
 }

@@ -7,10 +7,10 @@ import { handleSetup, isSetupPath, maskSetupPath } from './setup.js'
 
 /**
  * @param {{config: ReturnType<import('./config.js').loadConfig>, store: import('./keys.js').KeyStore,
- *          fetchImpl?: typeof fetch, log?: (line: string) => void}} deps
+ *          quota: import('./quota.js').QuotaStore, fetchImpl?: typeof fetch, log?: (line: string) => void}} deps
  */
-export function createGateway({ config, store, fetchImpl = fetch, log = (line) => console.log(line) }) {
-  const ctx = { config, store, fetchImpl, log }
+export function createGateway({ config, store, quota, fetchImpl = fetch, log = (line) => console.log(line) }) {
+  const ctx = { config, store, quota, fetchImpl, log }
 
   return createServer(async (req, res) => {
     const started = Date.now()

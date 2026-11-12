@@ -19,7 +19,7 @@ function Meter({ label, used, total, resetAt }: { label: string; used: number; t
       <div className={`bar bar--thin bar--${usageLevel(pct)}`}>
         <div className="bar__fill" style={{ width: `${pct}%` }} />
       </div>
-      <span className="small muted">Đặt lại: {reset ? formatDateTime(reset) : 'không có dữ liệu'}</span>
+      {resetAt !== null && <span className="small muted">Đặt lại: {reset ? formatDateTime(reset) : 'không có dữ liệu'}</span>}
     </div>
   )
 }
@@ -55,8 +55,15 @@ export function UsagePanel({ api, id, onError }: { api: AdminApi; id: number; on
               <RefreshIcon width={16} height={16} className={loading ? 'spin' : undefined} />
             </button>
           </div>
-          <Meter label="Chu kỳ 5 giờ" used={data.tokensUsed} total={data.tokenBudget} resetAt={data.windowEnd} />
+          <Meter label="Phiên 5 giờ" used={data.tokensUsed} total={data.tokenBudget} resetAt={data.windowEnd} />
           <Meter label="Trong tuần" used={data.sessionsUsed} total={data.maxSessions} resetAt={data.weeklyLimitResetAt} />
+          {data.rentalCap != null && <Meter label="Cả kỳ thuê" used={data.rentalUsed ?? 0} total={data.rentalCap} resetAt={null} />}
+          {data.available != null && (
+            <span className="small">
+              Có thể dùng ngay: <b className="mono">{formatNumber(data.available)}</b> token
+              {data.dailyRefill != null && <span className="muted"> · mỗi ngày cộng thêm {formatNumber(data.dailyRefill)}</span>}
+            </span>
+          )}
         </>
       ) : loading ? (
         <span className="small muted">Đang tải hạn mức…</span>

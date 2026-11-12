@@ -14,8 +14,8 @@ Không có thư viện ngoài: chỉ dùng `node:http`, `fetch` và `node:sqlite
 
 | Endpoint | Mô tả |
 | --- | --- |
-| `GET /api/proxy/check-usage?key=ak_…` | Kiểm tra hạn mức (trang frontend dùng) |
-| `* /api/proxy/*` | Proxy AI tương thích Anthropic, ví dụ `POST /api/proxy/v1/messages`. Key nhận qua `x-api-key` hoặc `Authorization: Bearer` và được chuyển tiếp bằng đúng header đó. |
+| `GET /api/proxy/check-usage?key=ak_…` | Hạn mức của gói (phiên 5 giờ, tuần, cả kỳ thuê, có thể dùng ngay), do gateway tự tính |
+| `POST /api/proxy/v1/messages` (+ `/count_tokens`), `GET /api/proxy/v1/models` | Proxy AI tương thích Anthropic, chuyển sang revidapi bằng key tài khoản `REVID_API_KEY`. Key khách nhận qua `x-api-key` hoặc `Authorization: Bearer`. Mọi đường dẫn khác trả 404 (revidapi có cả API kiểu OpenAI, ảnh, TTS… không được tính vào gói). |
 | `GET /api/setup/<windows\|mac\|linux>/ak_…` | Script cài nhanh Claude Code cho client (xem bên dưới). Dạng cũ `?os=…&key=…` vẫn dùng được. |
 | `/api/admin/keys…` | API quản trị, dùng bởi trang `/admin` của frontend (cần `Authorization: Bearer $ADMIN_TOKEN`) |
 | `GET /healthz` | Health check |
@@ -143,6 +143,23 @@ Mỗi trường hợp ghi một dòng `WARN`, xem bằng `docker logs quota-gate
 Script cài nhanh đặt thêm `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`: Claude Code coi model 5.x có context ~1 triệu token và chỉ tóm tắt khi gần mức đó; với cửa sổ 200k nó tóm tắt quanh 170k token. Khách đã cài trước đó cần chạy lại lệnh cài một lần để có biến này.
 
 Phía agentshop vẫn còn giới hạn 16384 token mỗi lượt; muốn Claude Code tự chia nhỏ câu trả lời thì đặt `CLAUDE_CODE_MAX_OUTPUT_TOKENS` ≤ 16000 cho client.
+
+## Nguồn AI: revidapi và gói thuê
+
+Toàn bộ request AI đi qua **một** key tài khoản revidapi (`REVID_API_KEY`); hạn mức từng khách do gateway tự đếm ([src/plans.js](src/plans.js), [src/quota.js](src/quota.js)).
+
+| Gói | Phiên 5 giờ | Tuần |
+| --- | --- | --- |
+| `pro` | 800k | 2,5M |
+| `max5x` | 2,5M | 10M |
+| `max20x` | 7,5M | 20M |
+
+- Đơn vị là **token quy đổi** theo giá revidapi đo thực tế (12/11/2026): output = 1, input và ghi cache = 0,36, đọc cache = 0,036; Opus 5.5 ×2,4, Opus 5 ×3, Haiku ×0,51. Chỉ cho dùng Claude Sonnet 5.5/5, Opus 5.5/5, Haiku 5.5/4.5; model khác trả 400.
+- Bốn giới hạn, đều phải còn chỗ thì request mới được gửi: phiên 5 giờ; tuần (tính theo kỳ thuê); cả kỳ thuê = max(1 phiên, tuần × số ngày ÷ 7); và số dư cộng dồn (lúc thuê có sẵn 1 phiên, mỗi ngày cộng thêm tuần ÷ 7, tối đa 1 phiên). Hết thì trả 429 `rate_limit_error` với thông báo tiếng Việt và `retry-after`. Số token thật của câu trả lời được trừ sau khi trả lời xong (một request có thể vượt nhẹ).
+- Mỗi key chạy tối đa `MAX_CONCURRENT_PER_KEY` (mặc định 3) request cùng lúc.
+- `HEDGE_AFTER_MS` (mặc định 0 = tắt): sau chừng ấy ms chưa có phản hồi thì gửi lại request lên revidapi và dùng bản trả lời trước (WARN `sending the request again`; khách chỉ bị trừ một lần). Tắt mặc định vì đo thực tế revidapi bình thường mất 6–30 giây mới trả byte đầu tiên: mốc ngắn sẽ gửi đôi request bình thường và tốn gấp đôi credit.
+- Lần đầu chạy bản này, mọi key đang gắn key agentshop được gán gói **Pro** cho số ngày còn lại (theo hạn sớm hơn giữa key và key agentshop). Chỉ chạy một lần (ghi trong bảng `gateway_meta`).
+- `GET /api/admin/upstream` đọc số dư credit revidapi (`/v1/usage` của revidapi, chung cho cả tài khoản).
 
 ## Bảo mật
 
