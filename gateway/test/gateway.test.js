@@ -1008,13 +1008,16 @@ describe('setup endpoint', () => {
 
       assert.deepEqual(read(c), {
         model: 'opus',
-        env: { KEEP: '1', ANTHROPIC_MODEL: 'm-big', ANTHROPIC_BASE_URL: 'https://gw.example/api/proxy', ANTHROPIC_AUTH_TOKEN: 'ak_NEW', ANTHROPIC_SMALL_FAST_MODEL: 'm-small', CLAUDE_CODE_DISABLE_1M_CONTEXT: '1' },
+        env: {
+          KEEP: '1', ANTHROPIC_MODEL: 'm-big', ANTHROPIC_BASE_URL: 'https://gw.example/api/proxy', ANTHROPIC_AUTH_TOKEN: 'ak_NEW',
+          ANTHROPIC_SMALL_FAST_MODEL: 'm-small', ANTHROPIC_DEFAULT_HAIKU_MODEL: 'm-small', CLAUDE_CODE_SUBAGENT_MODEL: 'm-small', CLAUDE_CODE_DISABLE_1M_CONTEXT: '1',
+        },
       })
       const vs = read(v)
       assert.equal(vs['editor.fontSize'], 15)
       assert.equal(vs['claudeCode.disableLoginPrompt'], true)
       assert.deepEqual(vs['claudeCode.environmentVariables'].map((e) => e.name), [
-        'FOO', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_MODEL', 'ANTHROPIC_SMALL_FAST_MODEL', 'CLAUDE_CODE_DISABLE_1M_CONTEXT',
+        'FOO', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_MODEL', 'ANTHROPIC_SMALL_FAST_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL', 'CLAUDE_CODE_DISABLE_1M_CONTEXT',
       ])
       // The untouched original is kept once, not overwritten by the second run.
       assert.equal(JSON.parse(readFileSync(`${c}.agentshop-backup`, 'utf8')).env.ANTHROPIC_API_KEY, 'ak_OLD')

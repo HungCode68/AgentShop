@@ -97,7 +97,12 @@ export function mergeSettingsMain(argv = process.argv) {
     ANTHROPIC_BASE_URL: host,
     ANTHROPIC_AUTH_TOKEN: key,
     ANTHROPIC_MODEL: model,
+    // Background tasks (titles, summaries...). ANTHROPIC_SMALL_FAST_MODEL is the deprecated name,
+    // kept for older Claude Code versions; ANTHROPIC_DEFAULT_HAIKU_MODEL replaces it.
     ANTHROPIC_SMALL_FAST_MODEL: smallModel,
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: smallModel,
+    // Subagents (Explore, searches, file reading) run on Haiku: about half Sonnet's credit cost.
+    CLAUDE_CODE_SUBAGENT_MODEL: smallModel,
     // Claude Code assumes a ~1M-token window for the 5.x models and only auto-compacts near it.
     // agentshop's backends get slow (and fail) long before that, so use the 200k window: the
     // conversation is then compacted around 170k tokens and every turn stays light.

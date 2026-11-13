@@ -41,7 +41,7 @@ Script ([src/setup.js](src/setup.js)) làm lần lượt:
 1. Cài Node LTS nếu chưa có Node 18+ (Windows: winget; macOS: Homebrew; Linux: hướng dẫn tự cài).
 2. `npm install -g @anthropic-ai/claude-code` (Windows gọi `npm.cmd` để không bị execution policy chặn).
 3. Cài extension `anthropic.claude-code` nếu máy có lệnh `code`.
-4. Ghi `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL=claude-sonnet-5-5`, `ANTHROPIC_SMALL_FAST_MODEL=claude-haiku-5-5` vào `~/.claude/settings.json` (Claude Code đọc ở cả terminal lẫn VS Code) và vào `claudeCode.environmentVariables` + `claudeCode.disableLoginPrompt` trong settings của VS Code.
+4. Ghi `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL=claude-sonnet-5-5`, `ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-5-5` (kèm tên cũ `ANTHROPIC_SMALL_FAST_MODEL` cho bản Claude Code cũ), `CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-5-5` (subagent chạy bằng Haiku, tốn khoảng một nửa so với Sonnet) vào `~/.claude/settings.json` (Claude Code đọc ở cả terminal lẫn VS Code) và vào `claudeCode.environmentVariables` + `claudeCode.disableLoginPrompt` trong settings của VS Code.
 
 Ghi config theo kiểu gộp: giữ nguyên các setting khác, đọc được settings VS Code có comment/dấu phẩy thừa, sao lưu bản gốc một lần thành `<file>.agentshop-backup`, file không đọc được thì để nguyên và in hướng dẫn. Xoá `ANTHROPIC_API_KEY` khỏi các file này (nó gửi qua `x-api-key`, gateway ưu tiên header đó nên key cũ sẽ thắng key mới) và cảnh báo nếu biến này còn trong môi trường hệ thống. Chạy lại nhiều lần không sao.
 
@@ -55,7 +55,8 @@ Cấu hình thủ công (nếu không dùng script):
 export ANTHROPIC_BASE_URL=https://agentshop.id.vn/api/proxy
 export ANTHROPIC_AUTH_TOKEN=ak_xxx
 export ANTHROPIC_MODEL=claude-sonnet-5-5
-export ANTHROPIC_SMALL_FAST_MODEL=claude-haiku-5-5
+export ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-5-5
+export CLAUDE_CODE_SUBAGENT_MODEL=claude-haiku-5-5
 ```
 
 ### Mã lỗi khi key không hợp lệ
