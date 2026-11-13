@@ -8,8 +8,7 @@
  * The credit cost of one answer is computed from revidapi's published per-model rates
  * (GET /v1/models, "credits_in_per_m" / "credits_out_per_m" / "credits_cache_per_m"):
  *   credits = input x in + cache write x write + cache read x read + output x out   (per 1M tokens)
- * Fresh input and cache writes are both charged at the cache-write rate, because revidapi
- * folds plain input into its cache (it caches every request automatically).
+ * revid caches every request automatically, so most input arrives as cache writes or reads.
  *
  * The trial is the exception: it is free and measured in **converted tokens** (a cost-neutral
  * unit, output = 1, input/cache write = 0.36, cache read = 0.036) so its cap does not move
@@ -25,17 +24,18 @@ export const SESSION_MS = 5 * HOUR_MS
 export const WEEK_MS = 7 * DAY_MS
 
 /**
- * revidapi's published credit rates, per 1M tokens.
- * Source: GET /v1/models on revidapi (read 2026-11-12).
- *   in     = fresh input tokens
- *   write  = cache-write tokens (revidapi charges fresh input at this rate too)
- *   read   = cache-read tokens
- *   out    = output tokens
+ * What revid really bills, in credits per 1M tokens.
+ *   in, out = published by GET /v1/models ("credits_in_per_m", "credits_out_per_m"), read 2026-11-13
+ *   write, read = measured 2026-11-13 against revid's /v1/usage (cache-heavy and cache-write-heavy
+ *                 batches per model). revid does not publish a cache-write rate; it is 1.667 x input
+ *                 for Sonnet and Opus, 1.25 x input for Haiku. Cache reads match the published
+ *                 "credits_cache_per_m" for Opus and Haiku; Sonnet measured 15.1 (published 26.9).
+ * Re-measure before changing these: the gateway charges customers exactly this.
  */
 export const MODEL_RATES = {
-  'claude-sonnet-5-5': { in: 129, write: 230, read: 36, out: 646 },
-  'claude-opus-5-5': { in: 338, write: 510, read: 53, out: 1506 },
-  'claude-haiku-5-5': { in: 65, write: 115, read: 18, out: 325 },
+  'claude-sonnet-5-5': { in: 129, write: 215.1, read: 15.1, out: 645.2 },
+  'claude-opus-5-5': { in: 301.1, write: 501.8, read: 53.8, out: 1505.4 },
+  'claude-haiku-5-5': { in: 64.9, write: 81.2, read: 7.4, out: 324.6 },
 }
 
 /** The only models customers may use. Anything else is refused with a 400. */

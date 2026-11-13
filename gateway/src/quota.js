@@ -1,4 +1,4 @@
-import { MINUTE_MS, PLANS, planCap } from './plans.js'
+import { MINUTE_MS, MODEL_RATES, PLANS, planCap } from './plans.js'
 
 /**
  * Per-key usage limits.
@@ -15,11 +15,6 @@ import { MINUTE_MS, PLANS, planCap } from './plans.js'
  * The **trial** is measured in converted tokens (a cost-neutral unit, see plans.js) and is limited
  * in time: the admin sets how many minutes it lasts. It has no credit budget.
  */
-
-/** Credits a request is assumed to need before its real usage is known (per 1M tokens). */
-const RESERVE_INPUT_RATE = 510 // the highest published cache-write rate, for input and cache write
-const RESERVE_CACHE_READ_RATE = 53 // the highest published cache-read rate
-const RESERVE_OUTPUT_RATE = 1506 // the highest published output rate
 
 export class QuotaStore {
   #db
@@ -117,10 +112,23 @@ export class QuotaStore {
   /**
    * Charges one answer: its real credit cost, its converted tokens, and its per-model breakdown.
    * The reservation held for this request (by reserve()) is released here.
+   *
+   * A paid pack is never charged past its credits: if an answer cost more than what was left
+   * (revid does not stop at max_tokens), the customer is charged up to the pack and the rest is
+   * returned as `absorbed` so the caller can log it - the operator pays that part.
+   * @returns {{charged: number, absorbed: number}}
    */
   charge(record, { credits = 0, tokens = 0, model = null, reserved = 0 }) {
-    const { s } = this.#state(record, this.#now())
+    const { plan, s } = this.#state(record, this.#now())
     s.reserved = Math.max(0, s.reserved - reserved)
+    let absorbed = 0
+    if (!plan.free) {
+      const room = Math.max(0, planCap(plan) - s.creditsUsed)
+      if (credits > room) {
+        absorbed = credits - room
+        credits = room
+      }
+    }
     s.creditsUsed += credits
     s.tokensUsed += tokens
     if (model && (credits > 0 || tokens > 0)) {
@@ -129,6 +137,7 @@ export class QuotaStore {
       m.credits += credits
     }
     this.#save(record, s)
+    return { charged: credits, absorbed }
   }
 
   /** Numbers for the quota page and /admin. */
@@ -176,13 +185,26 @@ function parseModels(raw) {
 }
 
 /**
- * The worst-case credit cost of a request, before it runs: every input token counted at the
- * cache-write rate, plus max_tokens of output. The cache-read part cannot be known in advance
- * and is released again afterwards, so this estimate only ever over-reserves.
+ * Tokens revid adds to every request on its own (its system prompt, cached on the first call).
+ * Measured 2026-11-13: the first call of a burst writes ~10.2k tokens to cache.
  */
-export function estimateRequestCredits({ inputTokens = 0, cacheReadTokens = 0, maxTokens = 0 }) {
-  const fresh = Math.max(0, inputTokens - cacheReadTokens)
-  return (
-    (fresh * RESERVE_INPUT_RATE + cacheReadTokens * RESERVE_CACHE_READ_RATE + Math.max(0, maxTokens) * RESERVE_OUTPUT_RATE) / 1e6
-  )
+export const REVID_OVERHEAD_TOKENS = 10_500
+/**
+ * revid ignores max_tokens (measured 2026-11-13: max_tokens 20 → 1.518 output tokens), so the
+ * output part of a reservation is at least this many tokens.
+ */
+export const OUTPUT_RESERVE_FLOOR = 4_096
+
+/**
+ * The likely worst-case credit cost of a request on `model`, before it runs: every input token
+ * (plus revid's own overhead) counted at the cache-write rate, plus the larger of max_tokens and
+ * OUTPUT_RESERVE_FLOOR of output. An answer can still cost more (revid does not stop at
+ * max_tokens); charge() then caps the customer at their pack, see there.
+ */
+export function estimateRequestCredits({ model, inputTokens = 0, maxTokens = 0 }) {
+  const r = MODEL_RATES[model]
+  if (!r) return 0
+  const input = Math.max(0, inputTokens) + REVID_OVERHEAD_TOKENS
+  const output = Math.max(OUTPUT_RESERVE_FLOOR, Number.isFinite(maxTokens) ? maxTokens : 0)
+  return (input * Math.max(r.in, r.write) + output * r.out) / 1e6
 }

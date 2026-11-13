@@ -43,9 +43,9 @@ export type ModelId = 'claude-sonnet-5-5' | 'claude-opus-5-5' | 'claude-haiku-5-
 
 /** revidapi credits per 1M tokens - same table as MODEL_RATES in gateway/src/plans.js. */
 export const MODEL_RATES: Record<ModelId, { in: number; write: number; read: number; out: number }> = {
-  'claude-sonnet-5-5': { in: 129, write: 230, read: 36, out: 646 },
-  'claude-opus-5-5': { in: 338, write: 510, read: 53, out: 1506 },
-  'claude-haiku-5-5': { in: 65, write: 115, read: 18, out: 325 },
+  'claude-sonnet-5-5': { in: 129, write: 215.1, read: 15.1, out: 645.2 },
+  'claude-opus-5-5': { in: 301.1, write: 501.8, read: 53.8, out: 1505.4 },
+  'claude-haiku-5-5': { in: 64.9, write: 81.2, read: 7.4, out: 324.6 },
 }
 export const MODEL_LABELS: Record<ModelId, string> = {
   'claude-sonnet-5-5': 'Sonnet 5.5',

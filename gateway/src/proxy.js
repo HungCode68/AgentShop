@@ -300,12 +300,15 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
   const charge = (usage) => {
     if (settled) return
     settled = true
-    quota.charge(record, {
+    const { absorbed } = quota.charge(record, {
       credits: creditsForUsage(usage, request.model),
       tokens: convertedTokens(usage),
       model: request.model,
       reserved: reservation,
     })
+    if (absorbed > 0) {
+      warn(log, `${req.method} ${url.pathname} key=#${record.id} answer cost ${absorbed.toFixed(3)} credit more than the pack had left; customer charged up to the pack only`)
+    }
   }
 
   if (route === 'messages') {
@@ -317,6 +320,7 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
     // Hold back the worst-case credit cost of this request, so the answer can never push the
     // account past the pack that was bought for this customer.
     const estimate = estimateRequestCredits({
+      model: request.model,
       inputTokens: estimateInputTokens(request) ?? 0,
       maxTokens: Number.isFinite(request.max_tokens) ? request.max_tokens : 0,
     })

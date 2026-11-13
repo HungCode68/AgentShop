@@ -286,6 +286,15 @@ describe('quota limits', () => {
     assert.equal(snap.models[MODEL].tokens, 100)
   })
 
+  test('an answer that costs more than what is left is charged only up to the pack', () => {
+    const { qs, record } = setup()
+    qs.charge(record(), { credits: PLANS.pro.credits - 1, tokens: 0, model: MODEL })
+    const r = qs.charge(record(), { credits: 3, tokens: 10, model: MODEL })
+    assert.deepEqual(r, { charged: 1, absorbed: 2 })
+    assert.equal(qs.snapshot(record()).used, PLANS.pro.credits, 'exactly the pack, never more')
+    assert.equal(qs.check(record()).ok, false)
+  })
+
   test('a new pack (plan changed) starts from zero', () => {
     const { clock, ks, qs, record } = setup()
     qs.charge(record(), { credits: PLANS.pro.credits, tokens: 0, model: MODEL })
@@ -537,16 +546,16 @@ describe('AI proxy (revidapi)', () => {
 
   test('a request that could overdraw the pack is refused before it is sent', async () => {
     const { key, record } = planKey()
-    // Leave only 1 credit of headroom: a big request's worst case does not fit, a small one does.
-    quota.charge(store.get(record.id), { credits: PLANS.pro.credits - 1, tokens: 0, model: null })
-    const big = await ask(base, key, { max_tokens: 1000 }) // reserves ~1.5 credits → does not fit
+    // Leave 10 credits: a 32k-token request's worst case (~23 credits on Sonnet) does not fit, a small one (~5) does.
+    quota.charge(store.get(record.id), { credits: PLANS.pro.credits - 10, tokens: 0, model: null })
+    const big = await ask(base, key, { max_tokens: 32_000 })
     assert.equal(big.status, 429, 'the estimate exceeds the leftover, so it is refused')
     assert.match((await big.json()).error.message, /không còn đủ credit cho yêu cầu này/)
-    const small = await ask(base, key, { max_tokens: 400 }) // reserves ~0.6 credits → fits
+    const small = await ask(base, key, { max_tokens: 400 })
     await small.text()
     assert.equal(small.status, 200, 'a request that fits the leftover budget still goes through')
     const snap = quota.snapshot(store.get(record.id))
-    assert.ok(snap.creditsUsed >= PLANS.pro.credits - 1 && snap.creditsUsed <= PLANS.pro.credits, 'never overdrawn')
+    assert.ok(snap.creditsUsed >= PLANS.pro.credits - 10 && snap.creditsUsed <= PLANS.pro.credits, 'never overdrawn')
     assert.equal(snap.reserved, 0)
     assert.equal(received.filter((r) => r.path === '/v1/messages').length, 1, 'the refused request never reached revidapi')
   })
