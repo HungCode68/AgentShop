@@ -1,4 +1,5 @@
 import { sendJson } from './http.js'
+import { buildChatboxBashScript, buildChatboxPowerShellScript } from './setupChatbox.js'
 
 // The models we serve, pinned into the generated scripts so a fresh install can never fall back
 // to an unsupported default (fable, dated haiku, …) and stall in 400/retry loops.
@@ -33,18 +34,21 @@ const REASON_MESSAGE = {
  * The path form exists because "?" and "&" plus nested quotes broke the one-liner on some
  * Windows shells. Request logs mask the key segment (see maskSetupPath).
  */
-const SETUP_PATH = /^\/api\/setup\/([^/]+)\/([^/]+)\/?$/
+// /api/setup/<os>/<key> sets up Claude Code; /api/setup/chatbox/<os>/<key> sets up the Chatbox app
+// (see setupChatbox.js).
+const SETUP_PATH = /^\/api\/setup\/(?:(chatbox)\/)?([^/]+)\/([^/]+)\/?$/
 
 /** True for /api/setup and /api/setup/<os>/<key>. */
 export const isSetupPath = (path) => path === '/api/setup' || path === '/api/setup/' || path.startsWith('/api/setup/')
 
 /** The request path with the key segment hidden, for logs. */
-export const maskSetupPath = (path) => path.replace(/^(\/api\/setup\/[^/]+\/)[^/]+/, '$1***')
+export const maskSetupPath = (path) => path.replace(/^(\/api\/setup\/(?:chatbox\/)?[^/]+\/)[^/]+/, '$1***')
 
 export function handleSetup(req, res, url, { store, config }) {
   if (req.method !== 'GET') return sendJson(res, 405, { success: false, message: 'Method not allowed', data: null })
 
-  const [, pathOs, pathKey] = SETUP_PATH.exec(url.pathname) ?? []
+  const [, pathApp, pathOs, pathKey] = SETUP_PATH.exec(url.pathname) ?? []
+  const chatbox = pathApp === 'chatbox'
   const key = (pathKey ?? url.searchParams.get('key') ?? '').trim()
   if (!key) return sendJson(res, 400, { success: false, message: 'API key is missing.', data: null })
 
@@ -64,15 +68,19 @@ export function handleSetup(req, res, url, { store, config }) {
 
   // Let the request log carry the key id (path-only logging; the key itself is never logged).
   res.keyId = resolved.record.id
-  const script =
-    os === 'windows'
-      ? buildPowerShellScript({ apiHost: config.publicApiHost, key })
-      : buildBashScript({ apiHost: config.publicApiHost, key })
+  const args = { apiHost: config.publicApiHost, key }
+  const script = chatbox
+    ? os === 'windows'
+      ? buildChatboxPowerShellScript(args)
+      : buildChatboxBashScript(args)
+    : os === 'windows'
+      ? buildPowerShellScript(args)
+      : buildBashScript(args)
 
   res.writeHead(200, {
     'content-type': 'text/plain; charset=utf-8',
     'cache-control': 'no-store',
-    'content-disposition': `attachment; filename="agentshop-setup.${os === 'windows' ? 'ps1' : 'sh'}"`,
+    'content-disposition': `attachment; filename="agentshop-${chatbox ? 'chatbox-' : ''}setup.${os === 'windows' ? 'ps1' : 'sh'}"`,
   })
   res.end(script)
 }

@@ -17,6 +17,7 @@ Không có thư viện ngoài: chỉ dùng `node:http`, `fetch` và `node:sqlite
 | `GET /api/proxy/check-usage?key=ak_…` | Hạn mức của gói: credit (gói trả phí) hoặc token (dùng thử) đã dùng / còn lại, chi tiết theo model, hạn dùng thử — do gateway tự tính |
 | `POST /api/proxy/v1/messages` (+ `/count_tokens`), `GET /api/proxy/v1/models` | Proxy AI tương thích Anthropic, chuyển sang revidapi bằng key tài khoản `REVID_API_KEY`. Key khách nhận qua `x-api-key` hoặc `Authorization: Bearer`. Mọi đường dẫn khác trả 404 (revidapi có cả API kiểu OpenAI, ảnh, TTS… không được tính vào gói). |
 | `GET /api/setup/<windows\|mac\|linux>/ak_…` | Script cài nhanh Claude Code cho client (xem bên dưới). Dạng cũ `?os=…&key=…` vẫn dùng được. |
+| `GET /api/setup/chatbox/<windows\|mac\|linux>/ak_…` | Script cài nhanh app Chatbox ([src/setupChatbox.js](src/setupChatbox.js)): cài Chatbox nếu chưa có (winget / Homebrew, hoặc bộ cài chính thức từ download.chatboxai.app — Windows chỉ chạy bộ cài có chữ ký "Mediocre, LLC"), rồi mở Chatbox với link `chatbox://provider/import` chứa API Host + key; khách bấm Save. macOS: bản Chatbox chính thức không đăng ký `chatbox://`, nên cấu hình được chép vào clipboard và khách dùng Settings → Model Provider → Add → Import from clipboard. |
 | `/api/admin/keys…` | API quản trị, dùng bởi trang `/admin` của frontend (cần `Authorization: Bearer $ADMIN_TOKEN`) |
 | `GET /healthz` | Health check |
 
