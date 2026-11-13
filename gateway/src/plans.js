@@ -61,7 +61,7 @@ export const normalizeModel = (m) =>
 
 /**
  * The packs we sell. `credits` is what the customer may spend in total; `price` is what we
- * charge them (revid's pack price + 30.000đ), confirmed 2026-11-12.
+ * charge them (confirmed 2026-11-13: 130k / 300k / 700k / 1.400k).
  * A paid pack has no time limit: "use it whenever, until the credits run out".
  */
 export const PLANS = {
@@ -76,10 +76,10 @@ export const PLANS = {
     // Default trial length in minutes; the admin can set another one per key.
     defaultMinutes: 60,
   },
-  starter: { id: 'starter', name: 'Starter', free: false, credits: 1_500, tokenCap: null, price: 129_000 },
-  pro: { id: 'pro', name: 'Pro', free: false, credits: 5_000, tokenCap: null, price: 309_000 },
-  business: { id: 'business', name: 'Business', free: false, credits: 13_000, tokenCap: null, price: 709_000 },
-  enterprise: { id: 'enterprise', name: 'Enterprise', free: false, credits: 30_000, tokenCap: null, price: 1_369_000 },
+  starter: { id: 'starter', name: 'Starter', free: false, credits: 1_500, tokenCap: null, price: 130_000 },
+  pro: { id: 'pro', name: 'Pro', free: false, credits: 5_000, tokenCap: null, price: 300_000 },
+  business: { id: 'business', name: 'Business', free: false, credits: 13_000, tokenCap: null, price: 700_000 },
+  enterprise: { id: 'enterprise', name: 'Enterprise', free: false, credits: 30_000, tokenCap: null, price: 1_400_000 },
 }
 export const PLAN_IDS = Object.keys(PLANS)
 

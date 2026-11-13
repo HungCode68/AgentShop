@@ -150,10 +150,10 @@ Toàn bộ request AI đi qua **một** key tài khoản revidapi (`REVID_API_KE
 
 | Gói | Credit | Giá vốn (revid) | Giá bán | Thời hạn |
 | --- | --- | --- | --- | --- |
-| `starter` | 1.500 | 99.000đ | 129.000đ | không thời hạn |
-| `pro` | 5.000 | 279.000đ | 309.000đ | không thời hạn |
-| `business` | 13.000 | 679.000đ | 709.000đ | không thời hạn |
-| `enterprise` | 30.000 | 1.339.000đ | 1.369.000đ | không thời hạn |
+| `starter` | 1.500 | 99.000đ | 130.000đ | không thời hạn |
+| `pro` | 5.000 | 279.000đ | 300.000đ | không thời hạn |
+| `business` | 13.000 | 679.000đ | 700.000đ | không thời hạn |
+| `enterprise` | 30.000 | 1.339.000đ | 1.400.000đ | không thời hạn |
 | `trial` (Dùng thử) | tối đa 100k token quy đổi | — | miễn phí | theo phút (mặc định 60) |
 
 - Gói trả phí là **số credit cố định, không thời hạn**: khách dùng lúc nào cũng được cho tới khi hết credit, không tự nạp lại. Đổi gói (PATCH `plan`) bắt đầu kỳ mới, số liệu tính lại từ 0.

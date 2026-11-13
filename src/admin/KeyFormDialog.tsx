@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import type { KeyInput, KeyRecord, PlanId } from './api'
-import { PACKS, TRIAL, tokensWorth } from './pricing'
+import { fmtTokenCount, PACKS, TRIAL, tokensWorth } from './pricing'
 import { InlineError, Modal } from './ui'
 import { formatShort } from './util'
 
@@ -118,7 +118,8 @@ export function KeyFormDialog({ record, onSubmit, onClose }: Props) {
               {pack && (
                 <span className="field__hint">
                   <b>{pack.credits.toLocaleString('vi-VN')} credit</b> (mua từ revid: {vnd.format(pack.costVnd)}đ, bán: {vnd.format(pack.priceVnd)}đ) · không thời hạn, khách dùng khi nào cũng được · ước tính ~
-                  {Math.round(tokensWorth(pack.credits) / 1e6)}M token Sonnet / {Math.round(tokensWorth(pack.credits, true) / 1e6)}M token Opus
+                  {fmtTokenCount(tokensWorth(pack.credits, 'claude-sonnet-5-5'))} token Sonnet / {fmtTokenCount(tokensWorth(pack.credits, 'claude-opus-5-5'))} Opus /{' '}
+                  {fmtTokenCount(tokensWorth(pack.credits, 'claude-haiku-5-5'))} Haiku khi code bằng Claude Code
                 </span>
               )}
               {isTrial && (
