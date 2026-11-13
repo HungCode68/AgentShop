@@ -22,7 +22,7 @@ Không có thư viện ngoài: chỉ dùng `node:http`, `fetch` và `node:sqlite
 
 ### Cài Claude Code cho client bằng 1 lệnh
 
-Trang `/huong-dan` có sẵn 3 lệnh này (tự điền key khi trang biết key của khách):
+Trang `/huong-dan/claude-code` hướng dẫn từng bước kèm ảnh và có sẵn 3 lệnh này (tự điền key khi trang biết key của khách; link cũ `/huong-dan#cai-nhanh` tự chuyển sang đây):
 
 ```powershell
 # Windows: chạy trong PowerShell (không phải cmd)

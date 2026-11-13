@@ -9,7 +9,7 @@ Trình duyệt ───────────► Nginx ──► frontend (tr
 
 | Thư mục | Nội dung |
 | --- | --- |
-| `src/` | Frontend React + Vite + TypeScript: trang kiểm tra hạn mức (`/`), trang hướng dẫn cài Chatbox (`/huong-dan`, trong `src/guide/`) và trang quản trị key (`/admin`, trong `src/admin/`) |
+| `src/` | Frontend React + Vite + TypeScript: trang kiểm tra hạn mức (`/`), trang hướng dẫn Chatbox (`/huong-dan`) và cài Claude Code (`/huong-dan/claude-code`), trong `src/guide/`; bảng giá (`/bang-gia`) và trang quản trị key (`/admin`, trong `src/admin/`) |
 | `gateway/` | Gateway Node.js: xác thực key `ak_`, ánh xạ sang key `as_`, chuyển tiếp request (xem [gateway/README.md](gateway/README.md)) |
 | `nginx.conf` | Cấu hình Nginx mẫu cho server |
 | `docker-compose.yml`, `Jenkinsfile` | Triển khai (xem [DEPLOY_GUIDE.md](DEPLOY_GUIDE.md)) |
@@ -67,4 +67,4 @@ Lỗi trả về `{"success": false, "message": "...", "data": null}` với HTTP
   - giá đề xuất = nội suy tuyến tính giữa các mốc giá đã chốt (1, 7, 30 ngày); quá mốc cuối thì theo giá/ngày của mốc cuối
   - giá sàn = giá vốn tối đa × (1 + lãi tối thiểu); lãi xấu nhất = giá − giá vốn tối đa; lãi thường gặp = giá − giá vốn tối đa × tỷ lệ dùng
   Các chỉnh sửa trên trang chỉ lưu trong trình duyệt; gateway chưa áp dụng các gói này.
-- `src/guide/` + `public/guide/*.png`: trang hướng dẫn người dùng tải Chatbox và điền API Host / API Key (tải riêng khi mở `/huong-dan`). API Host hiển thị được tính từ domain đang mở + `/api/proxy`. Nếu đã ghi nhớ key trên trang kiểm tra (hoặc mở link `/huong-dan?key=ak_...`), trang hiện sẵn nút sao chép key
+- `src/guide/` + `public/guide/*.png`: trang hướng dẫn tải Chatbox và điền API Host / API Key (`/huong-dan`), và trang cài Claude Code cho VS Code từng bước (`/huong-dan/claude-code`, ảnh `claude-*.png`), đều tải riêng khi mở. API Host hiển thị được tính từ domain đang mở + `/api/proxy`. Nếu đã ghi nhớ key trên trang kiểm tra (hoặc mở link `/huong-dan?key=ak_...`), trang hiện sẵn nút sao chép key

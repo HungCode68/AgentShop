@@ -1,112 +1,24 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { CheckIcon, ClipboardIcon } from '../components/Icons'
+import { useState } from 'react'
 import { Topbar } from '../components/Topbar'
-import { API_BASE } from '../lib/api'
-import { copyText } from '../lib/clipboard'
-import { savedKey } from '../lib/savedKey'
+import { API_HOST, CLAUDE_CODE_GUIDE, CopyField, knownKey, mask, Step, useHashScroll } from './shared'
 
-// What users paste into Chatbox's "API Host": our gateway's proxy root (Chatbox appends /messages itself).
-const API_HOST = new URL(`${API_BASE}/proxy`, window.location.origin).href
-const SETUP_URL = new URL(`${API_BASE}/setup`, window.location.origin).href
 const DOWNLOAD_URL = 'https://chatboxai.app'
-const KEY_PLACEHOLDER = 'KEY_CUA_BAN'
 
-/**
- * One-line installers served by the gateway (GET /api/setup/<os>/<key>). Deliberately free of
- * quotes, "?" and "&": the earlier nested-quote form broke on some Windows shells.
- */
-const setupCommands = (key: string) => ({
-  windows: `irm ${SETUP_URL}/windows/${key} | iex`,
-  mac: `curl -fsSL ${SETUP_URL}/mac/${key} | bash`,
-  linux: `curl -fsSL ${SETUP_URL}/linux/${key} | bash`,
-})
-
-/** The user's own key, when the quota page remembered it or the link carried ?key=. */
-function knownKey(): string | null {
-  const fromUrl = new URLSearchParams(window.location.search).get('key')?.trim()
-  const key = fromUrl || savedKey.get()
-  return key && key.startsWith('ak_') ? key : null
-}
-
-const mask = (k: string) => `${k.slice(0, 7)}••••••••${k.slice(-4)}`
-
-function CopyField({ label, value, display }: { label: string; value: string; display?: string }) {
-  const [done, setDone] = useState(false)
-  const copy = async () => {
-    if (await copyText(value)) {
-      setDone(true)
-      window.setTimeout(() => setDone(false), 1800)
-    }
-  }
-  return (
-    <div className="copy-field">
-      <span className="copy-field__label">{label}</span>
-      <code className="copy-field__value mono">{display ?? value}</code>
-      <button type="button" className={`btn btn--ghost copy-field__btn${done ? ' is-done' : ''}`} onClick={copy}>
-        {done ? <CheckIcon width={15} height={15} /> : <ClipboardIcon width={15} height={15} />}
-        {done ? 'Đã sao chép' : 'Sao chép'}
-      </button>
-    </div>
-  )
-}
-
-function Step({ n, title, img, alt, children }: { n: number; title: string; img: string; alt: string; children: ReactNode }) {
-  const src = `/guide/${img}`
-  return (
-    <section className="card guide-step" id={`buoc-${n}`}>
-      <div className="guide-step__head">
-        <span className="guide-step__num">{n}</span>
-        <h2>{title}</h2>
-      </div>
-      <div className="guide-step__body">{children}</div>
-      <a className="guide-step__shot" href={src} target="_blank" rel="noreferrer" title="Bấm để xem ảnh lớn">
-        <img src={src} alt={alt} loading={n === 1 ? 'eager' : 'lazy'} />
-      </a>
-    </section>
-  )
-}
-
-function QuickSetup({ keyValue }: { keyValue: string | null }) {
-  const real = setupCommands(keyValue ?? KEY_PLACEHOLDER)
-  // Shown with the key masked; the copy button copies the real command.
-  const shown = keyValue ? setupCommands(mask(keyValue)) : real
-  return (
-    <section className="card guide-keys guide-setup" id="cai-nhanh">
-      <h2>Dùng Claude Code (VS Code / terminal)? Cài bằng 1 lệnh</h2>
-      <p className="small muted">
-        Lệnh tự cài Claude Code (CLI + extension VS Code) và ghi sẵn API Host, key, model vào cấu hình. Setting cũ của bạn được giữ nguyên
-        (có bản sao lưu <span className="mono">.agentshop-backup</span>). Chạy xong, trong VS Code bấm <b>Developer: Reload Window</b>.
-      </p>
-      <p className="small muted">
-        Windows: bấm Start, gõ <b>PowerShell</b>, mở lên rồi dán lệnh dưới đây (không dán vào cmd). macOS / Linux: dán vào Terminal.
-      </p>
-      <CopyField label="Windows (PowerShell)" value={real.windows} display={shown.windows} />
-      <CopyField label="macOS" value={real.mac} display={shown.mac} />
-      <CopyField label="Linux" value={real.linux} display={shown.linux} />
-      {!keyValue && (
-        <p className="small muted">
-          Thay <span className="mono">{KEY_PLACEHOLDER}</span> bằng key <span className="mono">ak_…</span> của bạn trước khi chạy.
-        </p>
-      )}
-    </section>
-  )
+// Links sent before the Claude Code setup moved to its own page (/huong-dan#cai-nhanh) go there.
+if (window.location.hash === '#cai-nhanh') {
+  window.location.replace(CLAUDE_CODE_GUIDE + window.location.search)
 }
 
 const TOC = [
-  { href: '#chatbox', title: 'App Chatbox', desc: 'Chat trên máy tính hoặc điện thoại, 6 bước, khoảng 3 phút.' },
-  { href: '#cai-nhanh', title: 'Claude Code (VS Code / terminal)', desc: 'Dùng Claude để viết code, cài bằng 1 lệnh.' },
+  { href: '#chatbox', title: 'App Chatbox (máy tính)', desc: 'Hỏi đáp, chat. 6 bước có ảnh, khoảng 3 phút.' },
+  { href: CLAUDE_CODE_GUIDE, title: 'Claude Code (VS Code)', desc: 'Dùng Claude để viết code. Cài bằng 1 lệnh, có hướng dẫn từng bước.' },
   { href: '#gap-loi', title: 'Gặp lỗi?', desc: 'Các lỗi thường gặp và cách xử lý.' },
 ]
 
 export default function GuidePage() {
   const [key] = useState(knownKey)
-
-  // The page is lazy-loaded, so the browser's own jump to #section happens before the
-  // section exists. Redo it once rendered, so links like /huong-dan#cai-nhanh work.
-  useEffect(() => {
-    const id = decodeURIComponent(window.location.hash.slice(1))
-    if (id) document.getElementById(id)?.scrollIntoView()
-  }, [])
+  useHashScroll()
+  const claudeCodeLink = CLAUDE_CODE_GUIDE + window.location.search
 
   return (
     <div className="app">
@@ -124,7 +36,7 @@ export default function GuidePage() {
 
         <nav className="guide-toc" aria-label="Mục lục">
           {TOC.map((item) => (
-            <a key={item.href} className="card guide-toc__item" href={item.href}>
+            <a key={item.href} className="card guide-toc__item" href={item.href === CLAUDE_CODE_GUIDE ? claudeCodeLink : item.href}>
               <span className="guide-toc__title">{item.title}</span>
               <span className="guide-toc__desc">{item.desc}</span>
             </a>
@@ -143,14 +55,14 @@ export default function GuidePage() {
           )}
         </div>
 
-        <Step n={1} title="Tải và cài app Chatbox" img="1-download.png" alt="Trang tải Chatbox với các bản Windows, macOS, Linux, iOS, Android">
+        <Step n={1} title="Tải và cài app Chatbox" img="1-download.png" alt="Trang tải Chatbox với các bản cho Windows, macOS và Linux">
           <p>
             Vào{' '}
             <a href={DOWNLOAD_URL} target="_blank" rel="noreferrer">
               chatboxai.app
             </a>
-            , bấm <b>Download</b> và chọn đúng bản cho máy của bạn: Windows, macOS (Apple Silicon hoặc Intel), Linux, hoặc App Store / Google Play
-            trên điện thoại. Cài xong thì mở app lên.
+            , bấm <b>Download</b> và chọn đúng bản cho máy tính của bạn: Windows, macOS (Apple Silicon hoặc Intel) hoặc Linux. Cài xong thì mở
+            app lên.
           </p>
         </Step>
 
@@ -198,11 +110,19 @@ export default function GuidePage() {
         <Step n={6} title="Quay lại khung chat và chọn model" img="6-choose-model.png" alt="Danh sách model Claude trong mục More Providers">
           <p>
             Bấm vào tên model ở góc dưới bên phải ô chat, kéo xuống mục <b>More Providers</b> → <b>Claude</b> rồi chọn model muốn dùng, ví dụ{' '}
-            <b>Claude Opus 5</b> hoặc <b>Claude Sonnet 5</b>. Giờ bạn có thể bắt đầu chat.
+            <b>Claude Sonnet 5</b> (khuyên dùng) hoặc <b>Claude Opus 5</b> (mạnh nhất). Giờ bạn có thể bắt đầu chat.
           </p>
         </Step>
 
-        <QuickSetup keyValue={key} />
+        <a className="card guide-next" href={claudeCodeLink}>
+          <span>
+            <b>Dùng Claude để viết code trong VS Code?</b>
+            <span className="small muted">Cài Claude Code bằng 1 lệnh, có hướng dẫn từng bước kèm ảnh.</span>
+          </span>
+          <span className="guide-next__arrow" aria-hidden>
+            →
+          </span>
+        </a>
 
         <section className="card guide-faq" id="gap-loi">
           <h2>Gặp lỗi?</h2>
@@ -213,9 +133,10 @@ export default function GuidePage() {
             <dd>
               Chọn model trong mục <b>More Providers</b> → <b>Claude</b> như bước 6, đừng tự gõ tên model.
             </dd>
-            <dt>Báo key hết hạn hoặc hết hạn mức</dt>
+            <dt>Báo hết credit hoặc key hết hạn</dt>
             <dd>
-              Xem hạn sử dụng và lượng token còn lại ở trang <a href="/">Kiểm tra hạn mức</a>, hoặc liên hệ quản trị viên để gia hạn.
+              Xem số credit còn lại ở trang <a href="/">Kiểm tra hạn mức</a>, xem các gói ở trang <a href="/bang-gia">Bảng giá</a>, hoặc liên hệ
+              quản trị viên.
             </dd>
           </dl>
         </section>
