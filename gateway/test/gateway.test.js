@@ -1057,49 +1057,6 @@ describe('setup endpoint', () => {
     })
   })
 
-  test('Chatbox (Windows): installs if missing, then opens Chatbox with a deep link carrying the key and host', async () => {
-    const { key } = store.create({ name: 'C', plan: 'pro' })
-    const res = await fetch(`${base}/api/setup/chatbox/windows/${key}`)
-    assert.equal(res.status, 200)
-    assert.match(res.headers.get('content-disposition') ?? '', /agentshop-chatbox-setup\.ps1/)
-    const text = await res.text()
-    const b64 = /\$ChatboxLink = 'chatbox:\/\/provider\/import\?config=([A-Za-z0-9_-]+)'/.exec(text)?.[1]
-    assert.ok(b64, 'deep link present')
-    assert.deepEqual(JSON.parse(Buffer.from(b64, 'base64url').toString()), {
-      id: 'claude',
-      settings: { apiKey: key, apiHost: 'https://agentshop.id.vn/api/proxy' },
-    })
-    assert.match(text, /winget install -e --id Bin-Huang\.Chatbox/)
-    assert.match(text, /Get-AuthenticodeSignature/, 'a downloaded installer is only run when signed')
-    assert.match(text, /Start-Process -FilePath \$exe -ArgumentList \$ChatboxLink/, 'starts Chatbox.exe with the link, no protocol needed')
-    assert.match(text, /Set-Clipboard/, 'clipboard fallback')
-    assert.doesNotMatch(text, /[^\x00-\x7F]/, 'ASCII only for PowerShell 5.1')
-  })
-
-  test('Chatbox (macOS): clipboard import, since the mac build has no chatbox:// scheme', async () => {
-    const { key } = store.create({ name: 'M', plan: 'pro' })
-    const res = await fetch(`${base}/api/setup/chatbox/mac/${key}`)
-    assert.equal(res.status, 200)
-    const text = await res.text()
-    assert.ok(text.includes(key))
-    assert.match(text, /pbcopy/)
-    assert.match(text, /brew install --cask chatbox/)
-    assert.match(text, /latest-mac\.yml/)
-    assert.match(text, /Import from clipboard/)
-    assert.equal((await fetch(`${base}/api/setup/chatbox/windows/ak_nope`)).status, 401)
-    assert.equal((await fetch(`${base}/api/setup/chatbox/android/${key}`)).status, 400)
-  })
-
-  test('the key in a Chatbox setup path never reaches the log', async () => {
-    await withGateway({}, async (gw, lines) => {
-      const { key } = store.create({ name: 'L', plan: 'pro' })
-      assert.equal((await fetch(`${gw}/api/setup/chatbox/windows/${key}`)).status, 200)
-      await new Promise((r) => setTimeout(r, 20))
-      assert.ok(lines.some((l) => l.includes('GET /api/setup/chatbox/windows/*** 200')), lines.join('\n'))
-      assert.ok(lines.every((l) => !l.includes(key)))
-    })
-  })
-
   test('rejects missing or invalid os', async () => {
     const { key } = store.create({ name: 'O', plan: 'pro' })
     assert.equal((await fetch(`${base}/api/setup?key=${key}`)).status, 400)

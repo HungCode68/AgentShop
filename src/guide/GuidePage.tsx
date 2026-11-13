@@ -20,11 +20,6 @@ const setupCommands = (key: string) => ({
   mac: `curl -fsSL ${SETUP_URL}/mac/${key} | bash`,
   linux: `curl -fsSL ${SETUP_URL}/linux/${key} | bash`,
 })
-/** Same, for the Chatbox app: installs it when missing and hands it the API Host + key. */
-const chatboxCommands = (key: string) => ({
-  windows: `irm ${SETUP_URL}/chatbox/windows/${key} | iex`,
-  mac: `curl -fsSL ${SETUP_URL}/chatbox/mac/${key} | bash`,
-})
 
 /** The user's own key, when the quota page remembered it or the link carried ?key=. */
 function knownKey(): string | null {
@@ -55,125 +50,19 @@ function CopyField({ label, value, display }: { label: string; value: string; di
   )
 }
 
-function Step({
-  n,
-  id,
-  title,
-  img,
-  alt,
-  visual,
-  children,
-}: {
-  n: number
-  id?: string
-  title: string
-  img?: string
-  alt?: string
-  /** Shown instead of a screenshot (e.g. an illustrated terminal). */
-  visual?: ReactNode
-  children: ReactNode
-}) {
-  const [missing, setMissing] = useState(false)
-  const src = img ? `/guide/${img}` : ''
+function Step({ n, title, img, alt, children }: { n: number; title: string; img: string; alt: string; children: ReactNode }) {
+  const src = `/guide/${img}`
   return (
-    <section className="card guide-step" id={id ?? `buoc-${n}`}>
+    <section className="card guide-step" id={`buoc-${n}`}>
       <div className="guide-step__head">
         <span className="guide-step__num">{n}</span>
         <h2>{title}</h2>
       </div>
       <div className="guide-step__body">{children}</div>
-      {visual}
-      {img && !missing && (
-        <a className="guide-step__shot" href={src} target="_blank" rel="noreferrer" title="Bấm để xem ảnh lớn">
-          {/* A screenshot not uploaded yet just hides instead of showing a broken image. */}
-          <img src={src} alt={alt} loading={n === 1 ? 'eager' : 'lazy'} onError={() => setMissing(true)} />
-        </a>
-      )}
+      <a className="guide-step__shot" href={src} target="_blank" rel="noreferrer" title="Bấm để xem ảnh lớn">
+        <img src={src} alt={alt} loading={n === 1 ? 'eager' : 'lazy'} />
+      </a>
     </section>
-  )
-}
-
-/** What the customer sees after pasting the Chatbox command (an illustration of the script's real output). */
-function TerminalIllustration() {
-  return (
-    <div className="guide-term" aria-label="Minh hoạ cửa sổ PowerShell khi chạy lệnh">
-      <div className="guide-term__bar">
-        <span />
-        <span />
-        <span />
-        <b>Windows PowerShell</b>
-      </div>
-      <pre className="mono">
-        <span className="guide-term__cmd">PS C:\Users\ban&gt; irm …/chatbox/windows/ak_… | iex</span>
-        {'\n\n'}
-        <span className="guide-term__ok">== Chatbox not found - installing it.</span>
-        {'\n'}
-        <span className="guide-term__ok">== Installing Chatbox with winget.</span>
-        {'\n   Successfully installed\n\n'}
-        <span className="guide-term__ok">== Opening Chatbox with your settings.</span>
-        {'\n\n'}
-        <span className="guide-term__ok">== Almost done - in Chatbox:</span>
-        {"\n  1. In the 'Import Provider Configuration' window, click Save."}
-      </pre>
-    </div>
-  )
-}
-
-function ChatboxQuick({ keyValue }: { keyValue: string | null }) {
-  const real = chatboxCommands(keyValue ?? KEY_PLACEHOLDER)
-  const shown = keyValue ? chatboxCommands(mask(keyValue)) : real
-  return (
-    <>
-      <section className="card guide-keys guide-setup" id="chatbox">
-        <h2>Chatbox trên máy tính: cài bằng 1 lệnh</h2>
-        <p className="small muted">
-          Lệnh tự kiểm tra máy đã có app Chatbox chưa; chưa có thì tự tải bản chính thức và cài, rồi mở Chatbox với sẵn API Host và key của
-          bạn. Bạn chỉ cần bấm <b>Save</b> và bắt đầu chat. Cấu hình khác trong Chatbox được giữ nguyên.
-        </p>
-        <CopyField label="Windows (PowerShell)" value={real.windows} display={shown.windows} />
-        <CopyField label="macOS (Terminal)" value={real.mac} display={shown.mac} />
-        {!keyValue && (
-          <p className="small muted">
-            Thay <span className="mono">{KEY_PLACEHOLDER}</span> bằng key <span className="mono">ak_…</span> của bạn trước khi chạy.
-          </p>
-        )}
-      </section>
-
-      <Step n={1} id="chatbox-1" title="Mở PowerShell (hoặc Terminal) và dán lệnh" visual={<TerminalIllustration />}>
-        <p>
-          <b>Windows:</b> bấm Start, gõ <b>PowerShell</b>, mở lên rồi dán lệnh Windows ở trên và bấm Enter (không dán vào cmd).{' '}
-          <b>macOS:</b> mở <b>Terminal</b> rồi dán lệnh macOS.
-        </p>
-        <p className="small muted">Lần đầu cài, lệnh tải Chatbox khoảng 240 MB nên có thể mất vài phút. Máy đã có Chatbox thì chỉ vài giây.</p>
-      </Step>
-
-      <Step
-        n={2}
-        id="chatbox-2"
-        title="Bấm Save trong Chatbox"
-        img="chatbox-quick-save.png"
-        alt="Hộp thoại Import Provider Configuration của Chatbox với nút Save"
-      >
-        <p>
-          <b>Windows:</b> Chatbox tự mở hộp thoại <b>Import Provider Configuration</b> đã điền sẵn API Host và key. Bấm <b>Save</b>. Nếu
-          Chatbox hỏi ghi đè cấu hình Claude cũ, chọn đồng ý.
-        </p>
-        <p>
-          <b>macOS:</b> cấu hình đã được chép sẵn vào clipboard. Trong Chatbox vào <b>Settings → Model Provider</b>, bấm <b>Add</b>, chọn{' '}
-          <b>Import from clipboard</b> rồi bấm <b>Save</b>.
-        </p>
-        <p className="small muted">
-          Không thấy hộp thoại trên Windows? Làm như macOS: lệnh cũng đã chép cấu hình vào clipboard.
-        </p>
-      </Step>
-
-      <Step n={3} id="chatbox-3" title="Chọn model và bắt đầu chat" img="6-choose-model.png" alt="Danh sách model Claude trong mục More Providers">
-        <p>
-          Đóng Settings, bấm vào tên model ở góc dưới bên phải ô chat, kéo xuống <b>More Providers</b> → <b>Claude</b> và chọn model, ví dụ{' '}
-          <b>Claude Sonnet 5.5</b> (khuyên dùng), <b>Haiku 5.5</b> (tiết kiệm) hoặc <b>Opus 5.5</b> (mạnh nhất). Giờ bạn có thể chat.
-        </p>
-      </Step>
-    </>
   )
 }
 
@@ -204,9 +93,8 @@ function QuickSetup({ keyValue }: { keyValue: string | null }) {
 }
 
 const TOC = [
-  { href: '#chatbox', title: 'Chatbox trên máy tính', desc: 'Hỏi đáp, chat. Cài bằng 1 lệnh rồi bấm Save, khoảng 1 phút.' },
+  { href: '#chatbox', title: 'App Chatbox', desc: 'Chat trên máy tính hoặc điện thoại, 6 bước, khoảng 3 phút.' },
   { href: '#cai-nhanh', title: 'Claude Code (VS Code / terminal)', desc: 'Dùng Claude để viết code, cài bằng 1 lệnh.' },
-  { href: '#chatbox-thu-cong', title: 'Chatbox trên điện thoại / cài tay', desc: '6 bước điền API Host và key, khoảng 3 phút.' },
   { href: '#gap-loi', title: 'Gặp lỗi?', desc: 'Các lỗi thường gặp và cách xử lý.' },
 ]
 
@@ -217,11 +105,7 @@ export default function GuidePage() {
   // section exists. Redo it once rendered, so links like /huong-dan#cai-nhanh work.
   useEffect(() => {
     const id = decodeURIComponent(window.location.hash.slice(1))
-    const target = id ? document.getElementById(id) : null
-    // Old links to the manual steps (#buoc-4) point inside the collapsed section: open it first.
-    const details = target?.closest('details')
-    if (details) details.open = true
-    target?.scrollIntoView()
+    if (id) document.getElementById(id)?.scrollIntoView()
   }, [])
 
   return (
@@ -247,19 +131,7 @@ export default function GuidePage() {
           ))}
         </nav>
 
-        <ChatboxQuick keyValue={key} />
-
-        <QuickSetup keyValue={key} />
-
-        <details className="guide-manual" id="chatbox-thu-cong" open={window.location.hash === '#chatbox-thu-cong' || undefined}>
-          <summary className="card">
-            <span>
-              <b>Chatbox trên điện thoại, hoặc cài tay</b>
-              <span className="small muted"> · 6 bước, dùng khi không chạy được lệnh</span>
-            </span>
-          </summary>
-          <div className="guide-manual__body">
-        <div className="card guide-keys">
+        <div className="card guide-keys" id="chatbox">
           <h2>Hai thông tin bạn sẽ dán vào Chatbox</h2>
           <CopyField label="API Host" value={API_HOST} />
           {key ? (
@@ -326,11 +198,11 @@ export default function GuidePage() {
         <Step n={6} title="Quay lại khung chat và chọn model" img="6-choose-model.png" alt="Danh sách model Claude trong mục More Providers">
           <p>
             Bấm vào tên model ở góc dưới bên phải ô chat, kéo xuống mục <b>More Providers</b> → <b>Claude</b> rồi chọn model muốn dùng, ví dụ{' '}
-            <b>Claude Sonnet 5.5</b>, <b>Haiku 5.5</b> hoặc <b>Opus 5.5</b>. Giờ bạn có thể bắt đầu chat.
+            <b>Claude Opus 5</b> hoặc <b>Claude Sonnet 5</b>. Giờ bạn có thể bắt đầu chat.
           </p>
         </Step>
-          </div>
-        </details>
+
+        <QuickSetup keyValue={key} />
 
         <section className="card guide-faq" id="gap-loi">
           <h2>Gặp lỗi?</h2>
@@ -341,18 +213,9 @@ export default function GuidePage() {
             <dd>
               Chọn model trong mục <b>More Providers</b> → <b>Claude</b> như bước 6, đừng tự gõ tên model.
             </dd>
-            <dt>Lệnh cài Chatbox báo lỗi hoặc không cài được</dt>
+            <dt>Báo key hết hạn hoặc hết hạn mức</dt>
             <dd>
-              Tải Chatbox tại{' '}
-              <a href={DOWNLOAD_URL} target="_blank" rel="noreferrer">
-                chatboxai.app
-              </a>
-              , cài xong chạy lại lệnh: lệnh sẽ bỏ qua bước cài và chỉ mở Chatbox với cấu hình của bạn. Hoặc làm theo phần cài tay ở trên.
-            </dd>
-            <dt>Báo hết credit hoặc key hết hạn</dt>
-            <dd>
-              Xem số credit còn lại ở trang <a href="/">Kiểm tra hạn mức</a>, xem các gói ở trang <a href="/bang-gia">Bảng giá</a>, hoặc liên hệ
-              quản trị viên.
+              Xem hạn sử dụng và lượng token còn lại ở trang <a href="/">Kiểm tra hạn mức</a>, hoặc liên hệ quản trị viên để gia hạn.
             </dd>
           </dl>
         </section>
