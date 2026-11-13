@@ -1,30 +1,31 @@
 export interface UsageData {
   tier: string
-  tokensUsed: number
-  tokenBudget: number
+  /** 'credit' for a paid pack, 'token' for the free trial. */
+  unit: 'credit' | 'token'
+  /** How much of the pack is used (credits, or tokens for the trial). */
+  used: number
+  /** The pack's total (credits, or tokens for the trial). */
+  cap: number
+  remaining: number
   usagePercentage: number
-  windowEnd: string | null
-  sessionsUsed: number
-  maxSessions: number
-  weeklyLimitResetAt: string | null
+  /** When the trial runs out; null for a paid pack (it never expires). */
+  expiresAt: string | null
+  startedAt: string
+  /** What the customer used, per model. */
+  models?: Record<string, { tokens: number; credits: number }>
+  /** Credits held by requests that are still running. */
+  reserved?: number
   /** Added by our gateway: name of the issued key. */
   keyName?: string
   /** Added by our gateway: expiry of the issued key (ISO, null = never). Absent when calling agentshop directly. */
   keyExpiresAt?: string | null
-  /** Added by our gateway: expiry, issue time and plan length decoded from the mapped agentshop key (null = unknown). */
-  upstreamExpiresAt?: string | null
-  upstreamIssuedAt?: string | null
-  upstreamPlan?: string | null
-  /** Plan keys (revidapi): the rented plan and how much can be used right now. */
+  /** Plan keys (revidapi): the rented pack and when it started. */
   plan?: string | null
-  planDays?: number | null
+  /** The trial's length in minutes (paid packs have no time limit). */
+  planMinutes?: number | null
   planStartedAt?: string | null
-  /** Tokens usable right now (limited by session, week, rental and the daily-refilled balance). */
-  available?: number
-  /** Tokens added to the balance per day. */
-  dailyRefill?: number
-  rentalUsed?: number
-  rentalCap?: number
+  /** True for a paid pack: it has no time limit, only a credit budget. */
+  unlimited?: boolean
 }
 
 interface ApiEnvelope {

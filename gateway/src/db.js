@@ -32,13 +32,17 @@ export function openDb(path) {
   const columns = db.prepare('PRAGMA table_info(api_keys)').all().map((c) => c.name)
   if (!columns.includes('key_enc')) db.exec('ALTER TABLE api_keys ADD COLUMN key_enc TEXT')
 
-  // Plans (revidapi upstream): which plan a key rents, for how many days, and since when.
+  // Plans (revidapi upstream): which pack a key rents, for how long, and since when.
   if (!columns.includes('plan')) {
     db.exec(`
-      ALTER TABLE api_keys ADD COLUMN plan TEXT;            -- pro | max5x | max20x, NULL = no plan yet
+      ALTER TABLE api_keys ADD COLUMN plan TEXT;            -- trial | starter | pro | business | enterprise, NULL = no plan yet
       ALTER TABLE api_keys ADD COLUMN plan_days INTEGER;
       ALTER TABLE api_keys ADD COLUMN plan_started_at TEXT; -- ISO 8601 UTC; a new rental starts usage from zero
     `)
+  }
+  // The trial is limited in minutes (a paid pack has no time limit: null = no expiry).
+  if (!columns.includes('plan_minutes')) {
+    db.exec('ALTER TABLE api_keys ADD COLUMN plan_minutes INTEGER')
   }
 
   db.exec(`
@@ -61,6 +65,16 @@ export function openDb(path) {
       value TEXT NOT NULL
     );
   `)
+
+  // Credit-based accounting (2026-11-12): a paid pack is a credit budget with no time limit,
+  // the trial is a token budget with a time limit. Both counters live on the usage row.
+  const usageColumns = db.prepare('PRAGMA table_info(key_usage)').all().map((c) => c.name)
+  if (!usageColumns.includes('credits_used')) db.exec('ALTER TABLE key_usage ADD COLUMN credits_used REAL NOT NULL DEFAULT 0')
+  if (!usageColumns.includes('tokens_used')) db.exec('ALTER TABLE key_usage ADD COLUMN tokens_used REAL NOT NULL DEFAULT 0')
+  // Credits held by requests that are still running, so they cannot overdraw the pack.
+  if (!usageColumns.includes('reserved_credits')) db.exec('ALTER TABLE key_usage ADD COLUMN reserved_credits REAL NOT NULL DEFAULT 0')
+  // Per-model token breakdown as JSON, so the customer can see where their credits went.
+  if (!usageColumns.includes('models_used')) db.exec("ALTER TABLE key_usage ADD COLUMN models_used TEXT NOT NULL DEFAULT '{}'")
 
   return db
 }

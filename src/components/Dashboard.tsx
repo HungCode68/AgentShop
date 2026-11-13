@@ -1,6 +1,5 @@
 import type { UsageData } from '../lib/api'
-import { formatNumber, formatPlanDuration, formatTime, parseServerDate, usageLevel } from '../lib/format'
-import { translateDuration, type KeyInfo } from '../lib/keyInfo'
+import { formatNumber, formatTime, parseServerDate, usageLevel } from '../lib/format'
 import { ActivityIcon, CalendarIcon, CheckIcon, ClockIcon, LayersIcon, RefreshIcon, ShieldIcon, ZapIcon } from './Icons'
 import { StatCard } from './StatCard'
 import { TimerCard } from './TimerCard'
@@ -8,7 +7,6 @@ import { UsageGauge } from './UsageGauge'
 
 interface Props {
   data: UsageData
-  keyInfo: KeyInfo | null
   now: number
   lastChecked: Date
   loading: boolean
@@ -18,27 +16,35 @@ interface Props {
 }
 
 const STATUS_TEXT = {
-  ok: 'Hạn mức còn thoải mái',
-  warn: 'Sắp chạm giới hạn — cân nhắc sử dụng tiết kiệm',
+  ok: 'Gói còn thoải mái',
+  warn: 'Đã dùng nhiều — cân nhắc tiết kiệm',
   danger: 'Gần hết hoặc đã hết hạn mức',
 } as const
 
-export function Dashboard({ data, keyInfo, now, lastChecked, loading, onRefresh, autoRefresh, onAutoRefreshChange }: Props) {
-  const budget = data.tokenBudget
-  const used = data.tokensUsed
-  // Plan keys (gateway on revidapi): what is usable now also depends on the week, the rental and the daily refill.
-  const isPlan = data.plan != null
+const MODEL_NAMES: Record<string, string> = {
+  'claude-sonnet-5-5': 'Sonnet 5.5',
+  'claude-opus-5-5': 'Opus 5.5',
+  'claude-haiku-5-5': 'Haiku 5.5',
+}
+const fmtCredits = (n: number) => n.toLocaleString('vi-VN', { maximumFractionDigits: 1 })
+const fmtTokens = (n: number) => (n >= 1e6 ? `${(n / 1e6).toLocaleString('vi-VN', { maximumFractionDigits: 1 })}M` : formatNumber(n))
+
+export function Dashboard({ data, now, lastChecked, loading, onRefresh, autoRefresh, onAutoRefreshChange }: Props) {
+  const isPlan = data.unlimited === true || (data.plan != null && data.plan !== 'trial')
   const isTrial = data.plan === 'trial'
-  const remaining = isPlan && data.available != null ? data.available : Math.max(0, budget - used)
+  const unitName = data.unit === 'credit' ? 'credit' : 'token'
+  const fmt = data.unit === 'credit' ? fmtCredits : fmtTokens
+  const used = data.used
+  const budget = data.cap
+  const remaining = data.remaining
   const percent = Number.isFinite(data.usagePercentage) ? data.usagePercentage : budget > 0 ? (used / budget) * 100 : 0
   const level = usageLevel(percent)
-  const sessionPct = data.maxSessions > 0 ? (data.sessionsUsed / data.maxSessions) * 100 : 0
+  const totalTokens = Object.values(data.models ?? {}).reduce((n, m) => n + m.tokens, 0)
 
-  const windowEnd = parseServerDate(data.windowEnd)
-  const weeklyReset = parseServerDate(data.weeklyLimitResetAt)
-  const expiry = keyExpiryInfo(data, keyInfo)
-  const keyExpiry = expiry.target
+  const windowEnd = parseServerDate(data.expiresAt)
+  const keyExpiry = parseServerDate(data.keyExpiresAt)
   const keyExpired = keyExpiry ? keyExpiry.getTime() <= now : false
+  const trialMinutes = data.planMinutes ? ` (${data.planMinutes} phút)` : ''
 
   return (
     <section className="results" aria-live="polite">
@@ -72,11 +78,18 @@ export function Dashboard({ data, keyInfo, now, lastChecked, loading, onRefresh,
       <div className="card overview">
         <UsageGauge percent={percent} level={level} />
         <div className="overview__body">
-          <span className="eyebrow">{isTrial ? 'Token dùng thử đã dùng' : isPlan ? 'Token đã dùng trong phiên 5 giờ' : 'Token đã dùng trong chu kỳ'}</span>
+          <span className="eyebrow">
+            {isTrial
+              ? `Token dùng thử đã dùng${trialMinutes}`
+              : isPlan
+                ? `Credit đã dùng trong gói ${data.tier}`
+                : 'Đã dùng'}
+          </span>
           <div className="overview__numbers">
-            <span className="mono overview__used">{formatNumber(used)}</span>
+            <span className="mono overview__used">{fmt(used)}</span>
             <span className="overview__sep">/</span>
-            <span className="mono overview__budget">{formatNumber(budget)}</span>
+            <span className="mono overview__budget">{fmt(budget)}</span>
+            <span className="overview__unit muted small"> {unitName}</span>
           </div>
           <div className={`bar bar--${level}`} aria-hidden>
             <div className="bar__fill" style={{ width: `${Math.min(100, percent)}%` }} />
@@ -85,7 +98,7 @@ export function Dashboard({ data, keyInfo, now, lastChecked, loading, onRefresh,
           </div>
           <div className="overview__legend">
             <span>0</span>
-            <span>{formatNumber(budget)}</span>
+            <span>{fmt(budget)} {unitName}</span>
           </div>
           <div className={`status status--${level}`}>
             <span className="status__dot" />
@@ -95,91 +108,81 @@ export function Dashboard({ data, keyInfo, now, lastChecked, loading, onRefresh,
       </div>
 
       <div className="grid grid--3">
-        {isPlan ? (
-          <StatCard
-            icon={<LayersIcon />}
-            label="Có thể dùng ngay"
-            value={formatNumber(remaining)}
-            hint={data.dailyRefill ? `mỗi ngày cộng thêm ${formatNumber(data.dailyRefill)}` : 'token'}
-            tone="accent"
-          />
-        ) : (
-          <StatCard
-            icon={<LayersIcon />}
-            label="Còn lại"
-            value={formatNumber(remaining)}
-            hint={`${Math.max(0, 100 - percent).toFixed(2)}% hạn mức`}
-            tone="accent"
-          />
-        )}
+        <StatCard
+          icon={<LayersIcon />}
+          label="Còn lại"
+          value={fmt(remaining)}
+          hint={data.unit === 'credit' ? 'credit' : 'token'}
+          tone="accent"
+        />
         <StatCard
           icon={<ZapIcon />}
-          label={isTrial ? 'Hạn mức dùng thử' : isPlan ? 'Hạn mức phiên' : 'Tổng hạn mức'}
-          value={formatNumber(budget)}
-          hint={isTrial ? 'token cho cả thời gian thử' : isPlan ? 'token / 5 giờ' : 'token / chu kỳ'}
+          label="Gói"
+          value={data.tier || '—'}
+          hint={isTrial ? `miễn phí · 100k token trong thời gian thử` : isPlan ? 'không thời hạn — dùng khi nào cũng được' : undefined}
         />
-        {isTrial ? (
-          <StatCard icon={<ActivityIcon />} label="Gói" value="Dùng thử" hint={data.planDays ? formatPlanDuration(data.planDays) : undefined} />
-        ) : (
-          <StatCard
-            icon={<ActivityIcon />}
-            label={isPlan ? 'Đã dùng trong tuần' : 'Sessions'}
-            value={formatNumber(data.sessionsUsed)}
-            hint={`trên ${formatNumber(data.maxSessions)} (${sessionPct.toFixed(sessionPct < 1 ? 2 : 1)}%)`}
-          />
-        )}
+        <StatCard
+          icon={<ActivityIcon />}
+          label="Token đã dùng (tổng)"
+          value={fmtTokens(totalTokens)}
+          hint={isPlan ? data.reserved ? `${fmtCredits(data.reserved)} credit đang chạy` : 'chưa có request nào đang chạy' : undefined}
+        />
       </div>
 
+      {Object.keys(data.models ?? {}).length > 0 && (
+        <div className="card">
+          <h3 className="card__title">Chi tiết theo model</h3>
+          <table className="ktable">
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Token</th>
+                <th>Credit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(data.models!)
+                .sort((a, b) => b[1].credits - a[1].credits)
+                .map(([model, m]) => (
+                  <tr key={model}>
+                    <td data-label="Model">{MODEL_NAMES[model] ?? model}</td>
+                    <td data-label="Token">{fmtTokens(m.tokens)}</td>
+                    <td data-label="Credit">{fmtCredits(m.credits)}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <div className="grid grid--3">
-        <TimerCard
-          icon={<ClockIcon />}
-          title={isTrial ? 'Hết thời gian dùng thử sau' : isPlan ? 'Phiên 5 giờ đặt lại sau' : 'Chu kỳ hiện tại đặt lại sau'}
-          target={windowEnd}
-          emptyText={isPlan ? 'Chưa bắt đầu phiên' : undefined}
-          now={now}
-        />
-        <TimerCard icon={<CalendarIcon />} title="Giới hạn tuần đặt lại sau" target={weeklyReset} emptyText={isTrial ? 'Không áp dụng cho gói thử' : undefined} now={now} />
+        {isTrial ? (
+          <TimerCard icon={<ClockIcon />} title="Hết thời gian dùng thử sau" target={windowEnd} emptyText="Chưa bắt đầu" now={now} />
+        ) : (
+          <div className="card">
+            <h3 className="card__title">
+              <ClockIcon />
+              Không thời hạn
+            </h3>
+            <p className="small muted">Gói {data.tier} không hết hạn theo ngày — dùng tới khi hết {fmt(budget)} {unitName}.</p>
+          </div>
+        )}
+        <div className="card">
+          <h3 className="card__title">
+            <CalendarIcon />
+            Đã dùng từ
+          </h3>
+          <p className="mono small">{data.startedAt ? new Date(data.startedAt).toLocaleString('vi-VN') : '—'}</p>
+        </div>
         <TimerCard
           icon={<ShieldIcon />}
           title="Key hết hạn sau"
           target={keyExpiry}
-          start={expiry.start}
-          emptyText={expiry.viaGateway ? 'Không thời hạn' : undefined}
+          emptyText={keyExpiry ? undefined : isPlan ? 'Không thời hạn' : undefined}
           now={now}
-          note={expiry.note}
         />
       </div>
     </section>
   )
 }
 
-/**
- * Through our gateway the client's key stops working at whichever comes first: the ak_ expiry set by the
- * admin, or the agentshop key's own expiry (decoded server-side from its JWT). Calling agentshop directly,
- * the as_ JWT is decoded in the browser instead.
- */
-function keyExpiryInfo(data: UsageData, keyInfo: KeyInfo | null) {
-  const viaGateway = data.keyExpiresAt !== undefined
-  if (!viaGateway) {
-    return {
-      viaGateway,
-      target: keyInfo?.expiresAt ?? null,
-      start: keyInfo?.issuedAt ?? null,
-      note: keyInfo?.accountTime ? `Gói ${translateDuration(keyInfo.accountTime)}` : undefined,
-    }
-  }
-  const own = parseServerDate(data.keyExpiresAt)
-  const upstream = parseServerDate(data.upstreamExpiresAt)
-  const upstreamFirst = upstream !== null && (own === null || upstream.getTime() <= own.getTime())
-  const plan = data.plan
-    ? `Gói ${data.tier}${data.planDays ? ` · ${formatPlanDuration(data.planDays)}` : ''}`
-    : data.upstreamPlan
-      ? `Gói ${translateDuration(data.upstreamPlan)}`
-      : undefined
-  return {
-    viaGateway,
-    target: upstreamFirst ? upstream : own,
-    start: upstreamFirst ? parseServerDate(data.upstreamIssuedAt) : parseServerDate(data.planStartedAt ?? null),
-    note: [data.keyName, plan].filter(Boolean).join(' · ') || undefined,
-  }
-}

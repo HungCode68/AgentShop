@@ -14,7 +14,7 @@ Không có thư viện ngoài: chỉ dùng `node:http`, `fetch` và `node:sqlite
 
 | Endpoint | Mô tả |
 | --- | --- |
-| `GET /api/proxy/check-usage?key=ak_…` | Hạn mức của gói (phiên 5 giờ, tuần, cả kỳ thuê, có thể dùng ngay), do gateway tự tính |
+| `GET /api/proxy/check-usage?key=ak_…` | Hạn mức của gói: credit (gói trả phí) hoặc token (dùng thử) đã dùng / còn lại, chi tiết theo model, hạn dùng thử — do gateway tự tính |
 | `POST /api/proxy/v1/messages` (+ `/count_tokens`), `GET /api/proxy/v1/models` | Proxy AI tương thích Anthropic, chuyển sang revidapi bằng key tài khoản `REVID_API_KEY`. Key khách nhận qua `x-api-key` hoặc `Authorization: Bearer`. Mọi đường dẫn khác trả 404 (revidapi có cả API kiểu OpenAI, ảnh, TTS… không được tính vào gói). |
 | `GET /api/setup/<windows\|mac\|linux>/ak_…` | Script cài nhanh Claude Code cho client (xem bên dưới). Dạng cũ `?os=…&key=…` vẫn dùng được. |
 | `/api/admin/keys…` | API quản trị, dùng bởi trang `/admin` của frontend (cần `Authorization: Bearer $ADMIN_TOKEN`) |
@@ -41,7 +41,7 @@ Script ([src/setup.js](src/setup.js)) làm lần lượt:
 1. Cài Node LTS nếu chưa có Node 18+ (Windows: winget; macOS: Homebrew; Linux: hướng dẫn tự cài).
 2. `npm install -g @anthropic-ai/claude-code` (Windows gọi `npm.cmd` để không bị execution policy chặn).
 3. Cài extension `anthropic.claude-code` nếu máy có lệnh `code`.
-4. Ghi `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL=claude-sonnet-5-5`, `ANTHROPIC_SMALL_FAST_MODEL=claude-haiku-4-5` vào `~/.claude/settings.json` (Claude Code đọc ở cả terminal lẫn VS Code) và vào `claudeCode.environmentVariables` + `claudeCode.disableLoginPrompt` trong settings của VS Code.
+4. Ghi `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL=claude-sonnet-5-5`, `ANTHROPIC_SMALL_FAST_MODEL=claude-haiku-5-5` vào `~/.claude/settings.json` (Claude Code đọc ở cả terminal lẫn VS Code) và vào `claudeCode.environmentVariables` + `claudeCode.disableLoginPrompt` trong settings của VS Code.
 
 Ghi config theo kiểu gộp: giữ nguyên các setting khác, đọc được settings VS Code có comment/dấu phẩy thừa, sao lưu bản gốc một lần thành `<file>.agentshop-backup`, file không đọc được thì để nguyên và in hướng dẫn. Xoá `ANTHROPIC_API_KEY` khỏi các file này (nó gửi qua `x-api-key`, gateway ưu tiên header đó nên key cũ sẽ thắng key mới) và cảnh báo nếu biến này còn trong môi trường hệ thống. Chạy lại nhiều lần không sao.
 
@@ -55,7 +55,7 @@ Cấu hình thủ công (nếu không dùng script):
 export ANTHROPIC_BASE_URL=https://agentshop.id.vn/api/proxy
 export ANTHROPIC_AUTH_TOKEN=ak_xxx
 export ANTHROPIC_MODEL=claude-sonnet-5-5
-export ANTHROPIC_SMALL_FAST_MODEL=claude-haiku-4-5
+export ANTHROPIC_SMALL_FAST_MODEL=claude-haiku-5-5
 ```
 
 ### Mã lỗi khi key không hợp lệ
@@ -144,24 +144,27 @@ Script cài nhanh đặt thêm `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`: Claude Code c
 
 Phía agentshop vẫn còn giới hạn 16384 token mỗi lượt; muốn Claude Code tự chia nhỏ câu trả lời thì đặt `CLAUDE_CODE_MAX_OUTPUT_TOKENS` ≤ 16000 cho client.
 
-## Nguồn AI: revidapi và gói thuê
+## Nguồn AI: revidapi và gói credit
 
 Toàn bộ request AI đi qua **một** key tài khoản revidapi (`REVID_API_KEY`); hạn mức từng khách do gateway tự đếm ([src/plans.js](src/plans.js), [src/quota.js](src/quota.js)).
 
-| Gói | Phiên 5 giờ | Tuần |
-| --- | --- | --- |
-| `pro` | 800k | 2,5M |
-| `max5x` | 2,5M | 10M |
-| `max20x` | 7,5M | 20M |
-| `trial` (Dùng thử) | tổng 100k cho cả thời gian thử | — |
+| Gói | Credit | Giá vốn (revid) | Giá bán | Thời hạn |
+| --- | --- | --- | --- | --- |
+| `starter` | 1.500 | 99.000đ | 129.000đ | không thời hạn |
+| `pro` | 5.000 | 279.000đ | 309.000đ | không thời hạn |
+| `business` | 13.000 | 679.000đ | 709.000đ | không thời hạn |
+| `enterprise` | 30.000 | 1.339.000đ | 1.369.000đ | không thời hạn |
+| `trial` (Dùng thử) | tối đa 100k token quy đổi | — | miễn phí | theo phút (mặc định 60) |
 
-Gói **Dùng thử** miễn phí: tối đa 100k token quy đổi trong suốt thời gian thử, không cộng thêm theo ngày; thời gian đặt theo giờ (`planDays` nhận số lẻ tới 1 giờ, hoặc dạng `"6h"`). Giá vốn tối đa ~3.600đ/khách (100k × 0,036đ).
-
-- Đơn vị là **token quy đổi** theo giá revidapi đo thực tế (12/11/2026): output = 1, input và ghi cache = 0,36, đọc cache = 0,036; Opus 5.5 ×2,4, Opus 5 ×3, Haiku ×0,51. Chỉ cho dùng Claude Sonnet 5.5/5, Opus 5.5/5, Haiku 5.5/4.5; model khác trả 400.
-- Bốn giới hạn, đều phải còn chỗ thì request mới được gửi: phiên 5 giờ; tuần (tính theo kỳ thuê); cả kỳ thuê = max(1 phiên, tuần × số ngày ÷ 7); và số dư cộng dồn (lúc thuê có sẵn 1 phiên, mỗi ngày cộng thêm tuần ÷ 7, tối đa 1 phiên). Hết thì trả 429 `rate_limit_error` với thông báo tiếng Việt và `retry-after`. Số token thật của câu trả lời được trừ sau khi trả lời xong (một request có thể vượt nhẹ).
+- Gói trả phí là **số credit cố định, không thời hạn**: khách dùng lúc nào cũng được cho tới khi hết credit, không tự nạp lại. Đổi gói (PATCH `plan`) bắt đầu kỳ mới, số liệu tính lại từ 0.
+- Gói **Dùng thử**: tối đa 100k token quy đổi (output = 1, input/ghi cache = 0,36, đọc cache = 0,036), thời gian đặt bằng `planMinutes` (1 – 527.040 phút). Giá vốn tối đa ~3.600đ/khách.
+- Chỉ 3 model: `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5`. Id có đuôi ngày (`…-20251001`) và `claude-haiku-4-5` (script cài cũ) được tự đổi sang id tương ứng; model khác trả 400.
+- Credit của mỗi câu trả lời tính theo bảng giá công bố của revidapi (`GET /v1/models`, xem `MODEL_RATES`): input × in + ghi cache × write + đọc cache × read + output × out, trên 1M token.
+- **Không bao giờ vượt số credit đã mua**: trước khi gửi, gateway giữ chỗ (reserve) chi phí tối đa của request (input theo giá ghi cache cao nhất + `max_tokens` × giá output cao nhất). Không đủ credit còn lại thì trả 429 ngay, không gọi revidapi. Trả lời xong thì trừ chi phí thật và trả lại phần giữ chỗ thừa; request lỗi thì trả lại toàn bộ. Request chạy song song cũng giữ chỗ riêng nên không thể cùng nhau vượt gói.
+- Hết credit / hết token dùng thử / hết thời gian thử → 429 `rate_limit_error` với thông báo tiếng Việt (không có `retry-after` vì gói không tự nạp lại).
 - Mỗi key chạy tối đa `MAX_CONCURRENT_PER_KEY` (mặc định 3) request cùng lúc.
 - `HEDGE_AFTER_MS` (mặc định 0 = tắt): sau chừng ấy ms chưa có phản hồi thì gửi lại request lên revidapi và dùng bản trả lời trước (WARN `sending the request again`; khách chỉ bị trừ một lần). Tắt mặc định vì đo thực tế revidapi bình thường mất 6–30 giây mới trả byte đầu tiên: mốc ngắn sẽ gửi đôi request bình thường và tốn gấp đôi credit.
-- Lần đầu chạy bản này, mọi key đang gắn key agentshop được gán gói **Pro** cho số ngày còn lại (theo hạn sớm hơn giữa key và key agentshop). Chỉ chạy một lần (ghi trong bảng `gateway_meta`).
+- Lần đầu chạy bản này, key đang có gói được chuyển sang gói credit: `pro` → Pro, `max5x` → Business, `max20x` → Enterprise; key trả phí bỏ hạn dùng, key dùng thử giữ thời gian (đổi sang phút); số liệu dùng cũ được xoá vì đơn vị đã đổi. Chỉ chạy một lần (ghi `credits_migrated_at` trong bảng `gateway_meta`).
 - `GET /api/admin/upstream` đọc số dư credit revidapi (`/v1/usage` của revidapi, chung cho cả tài khoản).
 
 ## Bảo mật

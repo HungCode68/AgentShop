@@ -5,12 +5,13 @@ import { usageData } from './proxy.js'
 /**
  * Admin API (Authorization: Bearer <ADMIN_TOKEN>), used by the /admin page and by curl.
  *   GET    /api/admin/keys              list keys
- *   POST   /api/admin/keys              create   {name, plan?, planDays?, expiresAt?, note?}
+ *   POST   /api/admin/keys              create   {name, plan?, planMinutes?, expiresAt?, note?}
  *   GET    /api/admin/keys/:id          show
- *   PATCH  /api/admin/keys/:id          update   {name?, note?, plan?, planDays?, expiresAt?, status?}
- *                                       (plan/planDays start a new rental from now: usage resets, expiry = now + days)
+ *   PATCH  /api/admin/keys/:id          update   {name?, note?, plan?, planMinutes?, expiresAt?, status?}
+ *                                       (plan/planMinutes start a new period from now: usage resets,
+ *                                        the trial expires = now + minutes; a paid pack never expires)
  *   POST   /api/admin/keys/:id/rotate   issue a new client key (old one stops working)
- *   GET    /api/admin/keys/:id/usage    plan usage of the key (session, week, rental, available)
+ *   GET    /api/admin/keys/:id/usage    plan usage of the key (credits or tokens used, remaining, per model)
  *   GET    /api/admin/upstream          revidapi account balance (credits) and today's use
  *   GET    /api/admin/keys/:id/key      the full client key, to copy it again
  *   DELETE /api/admin/keys/:id          delete

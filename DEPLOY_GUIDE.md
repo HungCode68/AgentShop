@@ -108,11 +108,11 @@ Tóm tắt cấu hình Nginx:
 ### Cách nhanh: trang quản trị
 
 Mở `https://agentshop.id.vn/admin` (trang check quota không có nút dẫn tới đây) và nhập `GATEWAY_ADMIN_TOKEN`. Trên trang này bạn có thể:
-- Tạo key: điền tên khách, chọn gói (Pro / Max 5x / Max 20x, hoặc **Dùng thử**: miễn phí, tối đa 100k token, thời gian tính theo giờ) và số ngày thuê; hạn dùng tự tính, form hiện luôn giá gợi ý. Sau khi tạo sẽ hiện key `ak_...` kèm sẵn link check quota và cấu hình Claude Code để gửi cho khách.
-- Gia hạn / đổi gói: bấm Sửa → tích "Gia hạn / đổi gói" → chọn gói và số ngày. Kỳ thuê mới bắt đầu từ lúc lưu, hạn mức đã dùng tính lại từ 0.
+- Tạo key: điền tên khách, chọn gói credit (Starter / Pro / Business / Enterprise — không thời hạn, dùng tới khi hết credit) hoặc **Dùng thử** (miễn phí, tối đa 100k token, thời gian tính theo phút, mặc định 60). Sau khi tạo sẽ hiện key `ak_...` kèm sẵn link check quota và cấu hình Claude Code để gửi cho khách.
+- Đổi gói / mua thêm: bấm Sửa → tích "Đổi gói / bắt đầu kỳ mới" → chọn gói. Kỳ mới bắt đầu từ lúc lưu, số liệu đã dùng tính lại từ 0.
 - Sao chép lại key của khách bất cứ lúc nào bằng nút sao chép ở mỗi dòng (key tạo trước khi có tính năng này cần "Cấp lại key" một lần).
-- Xem hạn mức của từng khách (phiên 5 giờ, tuần, cả kỳ thuê, có thể dùng ngay) và số dư credit revidapi ở đầu trang (cảnh báo khi dưới `REVID_LOW_CREDITS`, mặc định 300).
-- Tab **Bảng giá**: tính giá, giá vốn và tiền lãi cho số ngày thuê bất kỳ.
+- Xem hạn mức của từng khách (credit đã dùng / còn lại, credit đang giữ chỗ, token và credit theo từng model) và số dư credit revidapi ở đầu trang (cảnh báo khi dưới `REVID_LOW_CREDITS`, mặc định 300).
+- Tab **Bảng giá**: giá vốn, giá bán, tiền lãi và số token ước tính của từng gói.
 - Cấp lại key (key cũ ngừng hoạt động ngay), thu hồi, kích hoạt lại, xoá.
 
 Mặc định token chỉ được lưu đến khi đóng tab. Chỉ chọn "Ghi nhớ" trên máy riêng của bạn.
@@ -122,11 +122,13 @@ Mặc định token chỉ được lưu đến khi đóng tab. Chỉ chọn "Ghi
 SSH vào server rồi chạy:
 
 ```bash
-docker exec quota-gateway node src/cli.js create --name "Khách A" --plan pro --days 30
+docker exec quota-gateway node src/cli.js create --name "Khách A" --plan pro
 # → in ra KEY: ak_... (gửi key này cho client; in lại bằng: reveal <id>)
+docker exec quota-gateway node src/cli.js create --name "Khách thử" --plan trial --minutes 30
 
 docker exec quota-gateway node src/cli.js list
-docker exec quota-gateway node src/cli.js plan 1 max5x 7    # gia hạn / đổi gói: kỳ thuê mới 7 ngày từ bây giờ
+docker exec quota-gateway node src/cli.js plan 1 business   # đổi gói / mua thêm: kỳ mới từ bây giờ, số liệu tính lại từ 0
+docker exec quota-gateway node src/cli.js plan 2 trial 120  # dùng thử 120 phút
 docker exec quota-gateway node src/cli.js revoke 1
 ```
 

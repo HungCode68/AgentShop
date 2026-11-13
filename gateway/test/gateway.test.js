@@ -10,7 +10,7 @@ import { after, before, beforeEach, describe, test } from 'node:test'
 import { decrypt, encrypt, parseEncryptionKey, sha256 } from '../src/crypto.js'
 import { openDb } from '../src/db.js'
 import { KeyStore } from '../src/keys.js'
-import { allowance, convertedTokens, DAY_MS, HOUR_MS, PLANS, SESSION_MS, WEEK_MS } from '../src/plans.js'
+import { convertedTokens, creditsForUsage, DAY_MS, HOUR_MS, MODEL_RATES, MINUTE_MS, PLANS, planCap } from '../src/plans.js'
 import { QuotaStore } from '../src/quota.js'
 import { createGateway } from '../src/server.js'
 import { buildBashScript } from '../src/setup.js'
@@ -159,7 +159,7 @@ const admin = (path, init = {}) =>
     ...init,
     headers: { authorization: `Bearer ${ADMIN_TOKEN}`, 'content-type': 'application/json', ...init.headers },
   })
-const planKey = (name = 'K', plan = 'pro', planDays = 30) => store.create({ name, plan, planDays })
+const planKey = (name = 'K', plan = 'pro') => store.create({ name, plan })
 /** POST /v1/messages through a gateway; returns the response. */
 const ask = (gwBase, key, payload = {}, extraHeaders = {}) =>
   fetch(`${gwBase}/api/proxy/v1/messages`, {
@@ -194,188 +194,194 @@ describe('crypto', () => {
   })
 })
 
-describe('plans and token accounting', () => {
-  test('converted tokens weigh input, cache and output, then the model', () => {
-    // 1000*0.36 + 2000*0.36 + 10000*0.036 + 500 = 1940 (Sonnet)
-    assert.equal(convertedTokens(METERED_USAGE, 'claude-sonnet-5-5'), METERED)
-    assert.equal(convertedTokens(METERED_USAGE, 'claude-opus-5-5'), Math.ceil(METERED * 2.4))
-    assert.equal(convertedTokens(METERED_USAGE, 'claude-haiku-4-5'), Math.ceil(METERED * 0.51))
-    assert.equal(convertedTokens({}, MODEL), 0)
-    assert.equal(convertedTokens({ output_tokens: 10 }, 'unknown-model'), 30, 'unknown models are charged at the highest weight')
+describe('plans and cost accounting', () => {
+  test('converted tokens weigh input, cache and output', () => {
+    // 1000*0.36 + 2000*0.36 + 10000*0.036 + 500 = 1940
+    assert.equal(convertedTokens(METERED_USAGE), METERED)
+    assert.equal(convertedTokens({}), 0)
   })
 
-  test('rental allowance: one full session for short rentals, weekly cap prorated otherwise', () => {
-    assert.equal(allowance(PLANS.pro, 1), 800_000)
-    assert.equal(allowance(PLANS.pro, 7), 2_500_000)
-    assert.equal(Math.round(allowance(PLANS.pro, 30)), Math.round((2_500_000 * 30) / 7))
+  test('credits are computed from revidapi\'s published per-model rates', () => {
+    // Sonnet: 1000 in + 2000 write + 10000 read + 500 out
+    const credits =
+      (1000 * MODEL_RATES[MODEL].in +
+        2000 * MODEL_RATES[MODEL].write +
+        10_000 * MODEL_RATES[MODEL].read +
+        500 * MODEL_RATES[MODEL].out) /
+      1e6
+    assert.equal(creditsForUsage(METERED_USAGE, MODEL), credits)
+    assert.ok(creditsForUsage(METERED_USAGE, 'claude-opus-5-5') > credits, 'Opus costs more than Sonnet')
+    assert.ok(creditsForUsage(METERED_USAGE, 'claude-haiku-5-5') < credits, 'Haiku costs less than Sonnet')
+    assert.equal(creditsForUsage({}, MODEL), 0)
+    assert.equal(creditsForUsage({ output_tokens: 100 }, 'unknown-model'), 0, 'unpriced models cost nothing (they are refused earlier)')
+  })
+
+  test('a plan is capped in credits; the trial in tokens', () => {
+    assert.equal(planCap(PLANS.pro), PLANS.pro.credits)
+    assert.equal(planCap(PLANS.starter), 1_500)
+    assert.equal(planCap(PLANS.business), 13_000)
+    assert.equal(planCap(PLANS.enterprise), 30_000)
+    assert.equal(planCap(PLANS.trial), 100_000)
+    assert.equal(PLANS.trial.credits, 0, 'the trial is free')
   })
 })
 
 describe('quota limits', () => {
   /** A key store + quota store on a fake clock. */
-  function setup(plan = 'pro', days = 30) {
+  function setup(plan = 'pro', minutes = null) {
     const clock = { t: Date.parse('2026-11-12T00:00:00Z') }
     const now = () => clock.t
     const d = openDb(':memory:')
     const ks = new KeyStore(d, { encryptionKey: ENC_KEY, now })
     const qs = new QuotaStore(d, { now })
-    const { record } = ks.create({ name: 'Q', plan, planDays: days })
+    const { record } = ks.create({ name: 'Q', plan, planMinutes: minutes })
     return { clock, ks, qs, record: () => ks.get(record.id) }
   }
 
-  test('a new rental starts with one full session available', () => {
+  test('a paid pack starts with its full credit budget and never expires', () => {
     const { qs, record } = setup()
     assert.deepEqual(qs.check(record()), { ok: true })
     const snap = qs.snapshot(record())
-    assert.equal(snap.available, 800_000)
-    assert.equal(snap.sessionEnd, null)
-    assert.equal(Math.round(snap.dailyRefill), Math.round(2_500_000 / 7))
+    assert.equal(snap.cap, PLANS.pro.credits)
+    assert.equal(snap.used, 0)
+    assert.equal(snap.remaining, PLANS.pro.credits)
+    assert.equal(snap.expiresAt, null, 'a paid pack has no time limit')
+    assert.equal(snap.unlimited, true)
   })
 
-  test('the 5-hour session cap blocks until the session ends, then usage resets', () => {
+  test('a pack blocks once its credits are used up, and never refills', () => {
     const { clock, qs, record } = setup()
-    const start = clock.t
-    qs.charge(record(), 800_000)
+    qs.charge(record(), { credits: PLANS.pro.credits, tokens: 1000, model: MODEL })
     const blocked = qs.check(record())
     assert.equal(blocked.ok, false)
-    assert.equal(blocked.limit, 'session')
-    assert.equal(blocked.retryAt, start + SESSION_MS)
-    clock.t = start + SESSION_MS
-    assert.equal(qs.check(record()).ok, true, 'balance refilled ~74k in 5h, session reset')
-    assert.equal(qs.snapshot(record()).sessionUsed, 0)
-  })
-
-  test('the balance spreads use over the week: empty means waiting for it to refill', () => {
-    const { clock, qs, record } = setup()
-    qs.charge(record(), 800_000)
-    clock.t += SESSION_MS // ~74k refilled
-    qs.charge(record(), 100_000) // balance now about -26k, session only 100k used
-    const blocked = qs.check(record())
-    assert.equal(blocked.limit, 'balance')
-    const rate = 2_500_000 / WEEK_MS
-    clock.t = blocked.retryAt
-    assert.equal(qs.check(record()).ok, true, 'open again once 5k tokens refilled')
-    assert.ok(qs.snapshot(record()).available >= 4_999 && qs.snapshot(record()).available < 5_000 + rate * 1000)
-  })
-
-  test('the balance never holds more than one session', () => {
-    const { clock, qs, record } = setup()
-    clock.t += 3 * DAY_MS
-    assert.equal(qs.snapshot(record()).available, 800_000)
-  })
-
-  test('the weekly cap blocks until the next 7-day window of the rental', () => {
-    const { clock, qs, record } = setup()
-    const start = clock.t
-    qs.charge(record(), 800_000)
-    clock.t += SESSION_MS
-    qs.charge(record(), 2_000_000) // one request may go over; the week is now past 2.5M
-    const blocked = qs.check(record())
-    assert.equal(blocked.limit, 'week')
-    assert.equal(blocked.retryAt, start + WEEK_MS)
-    clock.t = start + WEEK_MS + 1
-    const after = qs.snapshot(record())
-    assert.equal(after.weekUsed, 0)
-  })
-
-  test('a 1-day rental can use one session in total, not a refilled second one', () => {
-    const { clock, qs, record } = setup('pro', 1)
-    qs.charge(record(), 800_000)
-    clock.t += 12 * HOUR_MS
-    const blocked = qs.check(record())
-    assert.equal(blocked.limit, 'rental')
+    assert.equal(blocked.limit, 'credits')
     assert.equal(blocked.retryAt, null)
+    clock.t += 30 * DAY_MS
+    assert.equal(qs.check(record()).ok, false, 'a pack never refills')
   })
 
-  test('a new rental (plan or days changed) starts from zero', () => {
+  test('a request in flight holds its credits back, so a pack cannot be overdrawn', () => {
+    const { qs, record } = setup()
+    const held = qs.reserve(record(), 400)
+    assert.equal(held.ok, true)
+    assert.equal(qs.snapshot(record()).reserved, 400)
+    assert.equal(qs.snapshot(record()).creditsRemaining, PLANS.pro.credits - 400)
+    // A second request that would push past the pack is refused.
+    const tooMuch = qs.reserve(record(), PLANS.pro.credits)
+    assert.equal(tooMuch.ok, false)
+    // Releasing the reservation gives the credits back.
+    qs.release(record(), 400)
+    assert.equal(qs.snapshot(record()).reserved, 0)
+    assert.equal(qs.check(record()).ok, true)
+  })
+
+  test('charging replaces the reservation with the real cost', () => {
+    const { qs, record } = setup()
+    qs.reserve(record(), 400)
+    qs.charge(record(), { credits: 12.5, tokens: 100, model: MODEL, reserved: 400 })
+    const snap = qs.snapshot(record())
+    assert.equal(snap.reserved, 0, 'the reservation is released')
+    assert.equal(snap.used, 12.5, 'only the real cost is charged')
+    assert.equal(snap.models[MODEL].credits, 12.5)
+    assert.equal(snap.models[MODEL].tokens, 100)
+  })
+
+  test('a new pack (plan changed) starts from zero', () => {
     const { clock, ks, qs, record } = setup()
-    qs.charge(record(), 800_000)
+    qs.charge(record(), { credits: PLANS.pro.credits, tokens: 0, model: MODEL })
     assert.equal(qs.check(record()).ok, false)
     clock.t += 1000
-    ks.update(record().id, { plan: 'max5x', planDays: 7 })
+    ks.update(record().id, { plan: 'business' })
     assert.equal(qs.check(record()).ok, true)
     const snap = qs.snapshot(record())
-    assert.equal(snap.plan.id, 'max5x')
-    assert.equal(snap.totalUsed, 0)
-    assert.equal(snap.available, 2_500_000)
+    assert.equal(snap.plan.id, 'business')
+    assert.equal(snap.used, 0)
+    assert.equal(snap.cap, PLANS.business.credits)
   })
 })
 
 describe('trial plan', () => {
-  test('lasts the hours the admin sets ("6h") and allows 100k tokens in total, no refill', () => {
+  test('lasts the minutes the admin sets and allows 100k converted tokens in total, no refill', () => {
     const clock = { t: Date.parse('2026-11-12T00:00:00Z') }
     const now = () => clock.t
     const d = openDb(':memory:')
     const ks = new KeyStore(d, { encryptionKey: ENC_KEY, now })
     const qs = new QuotaStore(d, { now })
-    const { record } = ks.create({ name: 'Thử', plan: 'trial', planDays: '6h' })
+    const { record } = ks.create({ name: 'Thử', plan: 'trial', planMinutes: 360 })
     assert.equal(record.planName, 'Dùng thử')
-    assert.equal(record.planDays, 0.25)
-    assert.equal(Date.parse(record.expiresAt) - clock.t, 6 * HOUR_MS)
-    assert.equal(qs.snapshot(ks.get(record.id)).rentalCap, 100_000)
-    qs.charge(ks.get(record.id), 100_000)
-    clock.t += 5 * HOUR_MS + 1 // a new session would normally start, and the balance would refill
-    assert.deepEqual(qs.check(ks.get(record.id)), { ok: false, limit: 'rental', retryAt: null })
+    assert.equal(record.planMinutes, 360)
+    assert.equal(Date.parse(record.expiresAt) - clock.t, 360 * MINUTE_MS)
+    assert.equal(qs.snapshot(ks.get(record.id)).cap, 100_000)
+    qs.charge(ks.get(record.id), { credits: 0, tokens: 100_000, model: null })
+    clock.t += 5 * HOUR_MS + 1 // a new period would not refill: the cap is total, not per session
+    assert.deepEqual(qs.check(ks.get(record.id)), { ok: false, limit: 'tokens', retryAt: null })
     clock.t += HOUR_MS
     assert.equal(ks.resolve(ks.revealKey(record.id)).ok, false, 'expired after 6 hours')
   })
 
-  test('the quota page shows the trial as one 100k allowance until it expires', async () => {
-    const { key, record } = store.create({ name: 'Thử', plan: 'trial', planDays: '6h' })
-    quota.charge(store.get(record.id), 1234)
+  test('the quota page shows the trial as one 100k token allowance until it expires', async () => {
+    const { key, record } = store.create({ name: 'Thử', plan: 'trial', planMinutes: 360 })
+    quota.charge(store.get(record.id), { credits: 0, tokens: 1234, model: null })
     const d = (await (await fetch(`${base}/api/proxy/check-usage?key=${key}`)).json()).data
     assert.equal(d.tier, 'Dùng thử')
-    assert.equal(d.tokensUsed, 1234)
-    assert.equal(d.tokenBudget, 100_000)
-    assert.equal(d.available, 100_000 - 1234)
-    assert.equal(d.dailyRefill, 0)
-    assert.equal(d.windowEnd, d.keyExpiresAt)
-    assert.equal(d.weeklyLimitResetAt, null)
+    assert.equal(d.unit, 'token')
+    assert.equal(d.used, 1234)
+    assert.equal(d.cap, 100_000)
+    assert.equal(d.remaining, 100_000 - 1234)
+    assert.equal(d.plan, 'trial')
+    assert.equal(d.planMinutes, 360)
+    assert.equal(d.unlimited, false)
+    assert.equal(d.keyExpiresAt, d.expiresAt, 'the trial key expires with its time limit')
+    assert.ok(Date.parse(d.expiresAt) > Date.now())
   })
 
-  test('a longer trial still stops at 100k tokens', () => {
-    assert.equal(allowance(PLANS.trial, 30), 100_000)
+  test('a trial with no minutes set falls back to the 60-minute default', () => {
+    const d = openDb(':memory:')
+    const ks = new KeyStore(d, { encryptionKey: ENC_KEY, now: () => Date.parse('2026-11-12T00:00:00Z') })
+    const { record } = ks.create({ name: 'T', plan: 'trial' })
+    assert.equal(record.planMinutes, 60, 'default trial length')
   })
 
   test('the customer is told the trial is used up', async () => {
-    const { key, record } = store.create({ name: 'Thử', plan: 'trial', planDays: 1 })
-    quota.charge(store.get(record.id), 100_000)
+    const { key, record } = store.create({ name: 'Thử', plan: 'trial', planMinutes: 60 })
+    quota.charge(store.get(record.id), { credits: 0, tokens: 100_000, model: null })
     const res = await ask(base, key)
     assert.equal(res.status, 429)
-    assert.match((await res.json()).error.message, /Đã dùng hết 100k token dùng thử/)
+    assert.match((await res.json()).error.message, /Đã dùng hết 100k token của gói dùng thử/)
     assert.equal(received.length, 0)
   })
 })
 
 describe('check-usage', () => {
-  test('returns the plan usage in the shape the quota page reads', async () => {
-    const { key, record } = planKey('A', 'max5x', 7)
-    quota.charge(store.get(record.id), 1000)
+  test('returns the pack usage in the shape the quota page reads', async () => {
+    const { key, record } = planKey('A', 'business')
+    quota.charge(store.get(record.id), { credits: 120, tokens: 900, model: MODEL })
     const res = await fetch(`${base}/api/proxy/check-usage?key=${key}`)
     const body = await res.json()
     assert.equal(res.status, 200)
     assert.equal(res.headers.get('access-control-allow-origin'), '*')
     assert.equal(body.success, true)
     const d = body.data
-    assert.equal(d.tier, 'Max 5x')
-    assert.equal(d.tokensUsed, 1000)
-    assert.equal(d.tokenBudget, 2_500_000)
-    assert.equal(d.sessionsUsed, 1000)
-    assert.equal(d.maxSessions, 10_000_000)
-    assert.ok(Date.parse(d.windowEnd) > Date.now())
-    assert.ok(Date.parse(d.weeklyLimitResetAt) > Date.now())
+    assert.equal(d.tier, 'Business')
+    assert.equal(d.unit, 'credit')
+    assert.equal(d.used, 120)
+    assert.equal(d.cap, PLANS.business.credits)
+    assert.equal(d.remaining, PLANS.business.credits - 120)
+    assert.equal(d.usagePercentage, (120 / PLANS.business.credits) * 100)
+    assert.equal(d.expiresAt, null, 'a paid pack never expires')
+    assert.equal(d.unlimited, true)
+    assert.equal(d.plan, 'business')
+    assert.equal(d.planMinutes, null)
     assert.equal(d.keyName, 'A')
-    assert.equal(d.plan, 'max5x')
-    assert.equal(d.planDays, 7)
-    assert.equal(d.rentalCap, 10_000_000)
-    assert.equal(d.available, 2_499_000)
+    assert.deepEqual(d.models, { [MODEL]: { tokens: 900, credits: 120 } })
+    assert.equal(d.reserved, 0)
     assert.equal(received.length, 0, 'no upstream call')
   })
 
   test('rejects unknown, revoked, expired and plan-less keys', async () => {
     const revoked = planKey('R')
     store.update(revoked.record.id, { status: 'revoked' })
-    const expired = store.create({ name: 'E', plan: 'pro', planDays: 1, expiresAt: '2020-01-01T00:00:00Z' })
+    const expired = store.create({ name: 'E', plan: 'pro', expiresAt: '2020-01-01T00:00:00Z' })
     const noPlan = store.create({ name: 'U' })
     const cases = [
       ['ak_doesnotexist', 401, 'API key not found or unassigned.'],
@@ -418,7 +424,7 @@ describe('AI proxy (revidapi)', () => {
     assert.equal(res.status, 200)
     await res.text()
     assert.equal(received[0].path, '/v1/messages')
-    assert.equal(quota.snapshot(store.get(record.id)).sessionUsed, METERED, 'metered like any other request')
+    assert.equal(quota.snapshot(store.get(record.id)).creditsUsed, creditsForUsage(METERED_USAGE, MODEL), 'metered like any other request')
 
     const models = await fetch(`${base}/api/proxy/models`, { headers: { 'x-api-key': key } })
     assert.equal(models.status, 200)
@@ -441,23 +447,23 @@ describe('AI proxy (revidapi)', () => {
     assert.equal(received[0].headers.authorization, undefined)
   })
 
-  test('charges the converted tokens of a streamed answer to the key', async () => {
+  test('charges a streamed answer its real credit cost', async () => {
     const { key, record } = planKey()
     const res = await ask(base, key, { stream: true, scenario: 'metered' })
     await res.text()
-    assert.equal(quota.snapshot(store.get(record.id)).sessionUsed, METERED)
+    assert.equal(quota.snapshot(store.get(record.id)).creditsUsed, creditsForUsage(METERED_USAGE, MODEL))
   })
 
   test('charges a non-streamed answer too, weighted by model', async () => {
     const { key, record } = planKey()
     await (await ask(base, key, { scenario: 'metered', model: 'claude-opus-5-5' })).text()
-    assert.equal(quota.snapshot(store.get(record.id)).sessionUsed, Math.ceil(METERED * 2.4))
+    assert.equal(quota.snapshot(store.get(record.id)).creditsUsed, creditsForUsage(METERED_USAGE, 'claude-opus-5-5'))
   })
 
   test('a stream broken before its final usage is still charged (output estimated from content)', async () => {
     const { key, record } = planKey()
     await (await ask(base, key, { stream: true, scenario: 'break' })).text()
-    assert.ok(quota.snapshot(store.get(record.id)).sessionUsed > 0)
+    assert.ok(quota.snapshot(store.get(record.id)).creditsUsed > 0)
   })
 
   test('refuses models outside the priced Claude list, without calling revidapi', async () => {
@@ -472,11 +478,11 @@ describe('AI proxy (revidapi)', () => {
     assert.equal(received.length, 0)
   })
 
-  test('a dated model id from an older config is accepted and sent as the plain id', async () => {
+  test('a dated or older model id is accepted and sent normalised onto the priced id', async () => {
     const { key } = planKey()
     const res = await ask(base, key, { model: 'claude-haiku-4-5-20251001' })
     assert.equal(res.status, 200)
-    assert.equal(JSON.parse(received[0].body).model, 'claude-haiku-4-5')
+    assert.equal(JSON.parse(received[0].body).model, 'claude-haiku-5-5', 'haiku 4.5 is billed as haiku 5.5')
   })
 
   test('refuses every other revidapi endpoint (OpenAI format, images…) so nothing bypasses metering', async () => {
@@ -488,12 +494,11 @@ describe('AI proxy (revidapi)', () => {
     assert.equal(received.length, 0)
   })
 
-  test('/v1/models lists only the allowed models, answered by the gateway', async () => {
+  test('/v1/models lists exactly the three allowed models, answered by the gateway', async () => {
     const { key } = planKey()
     const res = await fetch(`${base}/api/proxy/v1/models`, { headers: { 'x-api-key': key } })
     const ids = (await res.json()).data.map((m) => m.id)
-    assert.ok(ids.includes('claude-sonnet-5-5') && ids.includes('claude-opus-5-5'))
-    assert.ok(!ids.some((id) => /gpt|gemini|fable/.test(id)))
+    assert.deepEqual(ids, ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5'])
     assert.equal(received.length, 0)
   })
 
@@ -506,7 +511,7 @@ describe('AI proxy (revidapi)', () => {
     })
     assert.deepEqual(await res.json(), { input_tokens: 42 })
     assert.equal(received[0].path, '/v1/messages/count_tokens')
-    assert.equal(quota.snapshot(store.get(record.id)).sessionUsed, 0)
+    assert.equal(quota.snapshot(store.get(record.id)).creditsUsed, 0)
   })
 
   test('upstream errors are passed through unchanged and not charged', async () => {
@@ -514,19 +519,36 @@ describe('AI proxy (revidapi)', () => {
     const res = await ask(base, key, { scenario: 'upstream-400' })
     assert.equal(res.status, 400)
     assert.equal((await res.json()).error.message, 'bad thing')
-    assert.equal(quota.snapshot(store.get(record.id)).sessionUsed, 0)
+    assert.equal(quota.snapshot(store.get(record.id)).creditsUsed, 0, 'a failed request is not charged')
+    assert.equal(quota.snapshot(store.get(record.id)).reserved, 0, 'its reservation is released too')
   })
 
-  test('over the limit → 429 rate_limit_error in Vietnamese with retry-after, revidapi not called', async () => {
+  test('over the credit budget → 429 rate_limit_error in Vietnamese, revidapi not called', async () => {
     const { key, record } = planKey()
-    quota.charge(store.get(record.id), 800_000)
+    quota.charge(store.get(record.id), { credits: PLANS.pro.credits, tokens: 0, model: null })
     const res = await ask(base, key)
     assert.equal(res.status, 429)
-    assert.ok(Number(res.headers.get('retry-after')) > 4 * 3600)
+    assert.equal(res.headers.get('retry-after'), null, 'a pack never refills')
     const err = (await res.json()).error
     assert.equal(err.type, 'rate_limit_error')
-    assert.match(err.message, /hết hạn mức phiên 5 giờ của gói Pro .*lúc \d{2}:\d{2} ngày \d{2}\/\d{2}\.$/)
+    assert.match(err.message, /Gói Pro đã dùng hết 5\.000 credit được mua/)
     assert.equal(received.length, 0)
+  })
+
+  test('a request that could overdraw the pack is refused before it is sent', async () => {
+    const { key, record } = planKey()
+    // Leave only 1 credit of headroom: a big request's worst case does not fit, a small one does.
+    quota.charge(store.get(record.id), { credits: PLANS.pro.credits - 1, tokens: 0, model: null })
+    const big = await ask(base, key, { max_tokens: 1000 }) // reserves ~1.5 credits → does not fit
+    assert.equal(big.status, 429, 'the estimate exceeds the leftover, so it is refused')
+    assert.match((await big.json()).error.message, /không còn đủ credit cho yêu cầu này/)
+    const small = await ask(base, key, { max_tokens: 400 }) // reserves ~0.6 credits → fits
+    await small.text()
+    assert.equal(small.status, 200, 'a request that fits the leftover budget still goes through')
+    const snap = quota.snapshot(store.get(record.id))
+    assert.ok(snap.creditsUsed >= PLANS.pro.credits - 1 && snap.creditsUsed <= PLANS.pro.credits, 'never overdrawn')
+    assert.equal(snap.reserved, 0)
+    assert.equal(received.filter((r) => r.path === '/v1/messages').length, 1, 'the refused request never reached revidapi')
   })
 
   test('rejects missing and invalid keys in Anthropic error format', async () => {
@@ -578,7 +600,7 @@ describe('stalled revidapi: the request is sent again', () => {
       assert.equal(res.status, 200)
       assert.ok(Date.now() - started < 550, 'did not wait for the stalled attempt')
       assert.equal(received.filter((r) => r.path === '/v1/messages').length, 2)
-      assert.equal(quota.snapshot(store.get(record.id)).sessionUsed, METERED, 'charged once')
+      assert.equal(quota.snapshot(store.get(record.id)).creditsUsed, creditsForUsage(METERED_USAGE, MODEL), 'charged once')
       assert.ok(lines.some((l) => /WARN .*sending the request again/.test(l)), lines.join('\n'))
     })
   })
@@ -620,7 +642,7 @@ describe('unreliable connection to revidapi', () => {
       const res = await ask(gw, key)
       assert.equal(res.status, 502)
       assert.equal(calls(), 1)
-      assert.equal(quota.snapshot(store.get(record.id)).sessionUsed, 0)
+      assert.equal(quota.snapshot(store.get(record.id)).creditsUsed, 0)
     })
   })
 })
@@ -648,31 +670,31 @@ describe('admin API', () => {
     assert.equal(usageFail, 0)
   })
 
-  test('create with a plan → update plan (new rental) → rotate → delete', async () => {
-    const before = Date.now()
-    const created = await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'Khách A', plan: 'pro', planDays: 7 }) })
+  test('create with a pack → change the pack (fresh period) → rotate → delete', async () => {
+    const created = await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'Khách A', plan: 'pro' }) })
     assert.equal(created.status, 201)
     const { key, record } = await created.json()
     assert.match(key, /^ak_[A-Za-z0-9_-]{43}$/)
     assert.equal(record.effectiveStatus, 'active')
     assert.equal(record.plan, 'pro')
     assert.equal(record.planName, 'Pro')
-    assert.equal(record.planDays, 7)
-    const exp = Date.parse(record.expiresAt) - Date.parse(record.planStartedAt)
-    assert.equal(exp, 7 * DAY_MS, 'expiry = rental start + days')
-    assert.ok(Date.parse(record.planStartedAt) >= before - 5)
+    assert.equal(record.expiresAt, null, 'a paid pack never expires')
+    assert.equal(record.planDays, null, 'the legacy day counter is gone')
+    assert.ok(record.planStartedAt)
 
     const listText = await (await admin('/keys')).text()
     assert.ok(!listText.includes(key), 'client key never returned after creation')
 
-    quota.charge(store.get(record.id), 5000)
-    const patched = await (await admin(`/keys/${record.id}`, { method: 'PATCH', body: JSON.stringify({ plan: 'max20x', planDays: 30 }) })).json()
-    assert.equal(patched.plan, 'max20x')
-    assert.equal(patched.planDays, 30)
-    assert.equal(quota.snapshot(store.get(record.id)).totalUsed, 0, 'new rental, fresh usage')
+    quota.charge(store.get(record.id), { credits: 50, tokens: 1000, model: MODEL })
+    assert.equal(quota.snapshot(store.get(record.id)).creditsUsed, 50)
+    const patched = await (await admin(`/keys/${record.id}`, { method: 'PATCH', body: JSON.stringify({ plan: 'enterprise' }) })).json()
+    assert.equal(patched.plan, 'enterprise')
+    assert.equal(quota.snapshot(store.get(record.id)).creditsUsed, 0, 'new pack, fresh usage')
+    assert.equal(quota.snapshot(store.get(record.id)).cap, PLANS.enterprise.credits)
 
     const usage = await (await admin(`/keys/${record.id}/usage`)).json()
-    assert.equal(usage.usage.tier, 'Max 20x')
+    assert.equal(usage.usage.tier, 'Enterprise')
+    assert.equal(usage.usage.unit, 'credit')
 
     const rotated = await (await admin(`/keys/${record.id}/rotate`, { method: 'POST' })).json()
     assert.equal(store.resolve(key).ok, false, 'old key stops working')
@@ -683,16 +705,18 @@ describe('admin API', () => {
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM key_usage WHERE key_id = ?').get(record.id).n, 0, 'usage rows deleted too')
   })
 
-  test('validates plans and days', async () => {
+  test('validates plans and minutes', async () => {
     assert.equal((await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'X', plan: 'ultra' }) })).status, 400)
-    assert.equal((await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'X', plan: 'pro', planDays: 0 }) })).status, 400)
-    assert.equal((await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'X', plan: 'pro', planDays: 0.01 }) })).status, 400, 'under one hour')
-    assert.equal((await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'X', plan: 'pro', planDays: 'abc' }) })).status, 400)
-    assert.equal((await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'X', plan: 'trial', planDays: '0h' }) })).status, 400)
+    assert.equal((await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'X', plan: 'trial', planMinutes: 0 }) })).status, 400, 'under one minute')
+    assert.equal((await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'X', plan: 'trial', planMinutes: 527_041 }) })).status, 400, 'over 366 days')
+    assert.equal((await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'X', plan: 'trial', planMinutes: 'abc' }) })).status, 400)
     assert.equal((await admin('/keys', { method: 'POST', body: JSON.stringify({}) })).status, 400)
     assert.equal((await admin('/keys', { method: 'POST', body: 'not json' })).status, 400)
+    const trial = await (await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'T', plan: 'trial' }) })).json()
+    assert.equal(trial.record.planMinutes, 60, 'the trial defaults to 60 minutes')
+    assert.ok(trial.record.expiresAt, 'the trial expires; a paid pack would not')
     const noPlan = store.create({ name: 'N' }).record
-    assert.equal((await admin(`/keys/${noPlan.id}`, { method: 'PATCH', body: JSON.stringify({ planDays: 3 }) })).status, 400)
+    assert.equal((await admin(`/keys/${noPlan.id}`, { method: 'PATCH', body: JSON.stringify({ planMinutes: 3 }) })).status, 400, 'minutes need a plan')
     assert.equal((await admin(`/keys/${noPlan.id}/usage`)).status, 409)
     const removed = await (await admin(`/keys/${planKey().record.id}`, { method: 'PATCH', body: JSON.stringify({ plan: null }) })).json()
     assert.equal(removed.plan, null)
@@ -742,7 +766,7 @@ describe('database migration', () => {
     return { path, old }
   }
 
-  test('agentshop-era keys get the Pro plan for the days they had left, once', () => {
+  test('agentshop-era keys get a credit pack and stop expiring, once', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gw-'))
     try {
       const { path, old } = oldDatabase(dir)
@@ -757,11 +781,12 @@ describe('database migration', () => {
       const d = openDb(path)
       const ks = new KeyStore(d, { encryptionKey: ENC_KEY, now: () => now })
       const [a, b, c] = [1, 2, 3].map((id) => ks.get(id))
-      assert.equal(a.plan, 'pro')
-      assert.equal(a.planDays, 10)
-      assert.equal(a.expiresAt, new Date(now + 10 * DAY_MS).toISOString())
-      assert.equal(b.planDays, 3)
-      assert.equal(b.expiresAt, new Date(now + 3 * DAY_MS).toISOString())
+      assert.equal(a.plan, 'pro', 'the agentshop-era plan became the Pro credit pack')
+      assert.equal(a.planDays, null, 'the legacy day counter is gone')
+      assert.equal(a.planMinutes, null, 'a paid pack has no time limit')
+      assert.equal(a.expiresAt, null, 'a paid pack never expires')
+      assert.equal(b.plan, 'pro')
+      assert.equal(b.expiresAt, null)
       assert.equal(c.plan, null)
       assert.equal(ks.resolve('ak_a').ok, true, 'old customers keep working after the deploy')
       assert.equal(a.canCopy, false, 'pre-copy keys still need a rotation to be copyable')
@@ -770,6 +795,43 @@ describe('database migration', () => {
       ks.update(1, { plan: null })
       const again = new KeyStore(d, { encryptionKey: ENC_KEY, now: () => now })
       assert.equal(again.get(1).plan, null)
+      d.close()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('old session/week plans are remapped onto credit packs and their usage is reset', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gw-'))
+    try {
+      const path = join(dir, 'old.db')
+      const old = new DatabaseSync(path)
+      old.exec(`CREATE TABLE api_keys (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, note TEXT, key_hash TEXT NOT NULL UNIQUE,
+        key_prefix TEXT NOT NULL, upstream_key_enc TEXT, upstream_fingerprint TEXT UNIQUE, upstream_hint TEXT,
+        status TEXT NOT NULL DEFAULT 'active', expires_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        last_used_at TEXT, request_count INTEGER NOT NULL DEFAULT 0,
+        plan TEXT, plan_days INTEGER, plan_started_at TEXT)`)
+      const insert = old.prepare('INSERT INTO api_keys (name, key_hash, key_prefix, plan, plan_days, plan_started_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      insert.run('5x', sha256('ak_5x'), 'ak_5x', 'max5x', 30, 't', 't', 't')
+      insert.run('20x', sha256('ak_20x'), 'ak_20x', 'max20x', 30, 't', 't', 't')
+      insert.run('trial', sha256('ak_tr'), 'ak_tr', 'trial', 1, 't', 't', 't')
+      old.exec(`CREATE TABLE key_usage (
+        key_id INTEGER PRIMARY KEY, plan_started_at TEXT NOT NULL, session_start INTEGER,
+        session_used REAL NOT NULL DEFAULT 0, week_index INTEGER NOT NULL DEFAULT 0,
+        week_used REAL NOT NULL DEFAULT 0, balance REAL NOT NULL, balance_at INTEGER NOT NULL,
+        total_used REAL NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)`)
+      old.prepare('INSERT INTO key_usage (key_id, plan_started_at, balance, balance_at, total_used, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(1, 't', 100, 0, 500, 't')
+      old.close()
+
+      const d = openDb(path)
+      const ks = new KeyStore(d, { encryptionKey: ENC_KEY, now: () => Date.parse('2026-11-12T00:00:00Z') })
+      assert.equal(ks.get(1).plan, 'business', 'max5x → Business')
+      assert.equal(ks.get(2).plan, 'enterprise', 'max20x → Enterprise')
+      assert.equal(ks.get(3).plan, 'trial')
+      assert.equal(ks.get(3).planMinutes, 1440, 'a 1-day trial became 1440 minutes')
+      assert.equal(ks.get(1).expiresAt, null, 'a paid pack never expires')
+      assert.equal(d.prepare('SELECT COUNT(*) AS n FROM key_usage WHERE key_id = 1').get().n, 0, 'the old counters are dropped')
       d.close()
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -879,7 +941,7 @@ describe('Claude Code streams through upstream quirks', () => {
 
 describe('setup endpoint', () => {
   test('returns a bash script (os=mac) that carries the key, host and pinned models', async () => {
-    const { key } = store.create({ name: 'S', plan: 'pro', planDays: 30 })
+    const { key } = store.create({ name: 'S', plan: 'pro' })
     const res = await fetch(`${base}/api/setup?key=${key}&os=mac`)
     assert.equal(res.status, 200)
     assert.equal(res.headers.get('content-type'), 'text/plain; charset=utf-8')
@@ -889,7 +951,7 @@ describe('setup endpoint', () => {
     assert.ok(text.includes(`API_KEY='${key}'`), 'script embeds the caller\'s key')
     assert.ok(text.includes("API_HOST='https://agentshop.id.vn/api/proxy'"))
     assert.match(text, /ANTHROPIC_MODEL='claude-sonnet-5-5'/)
-    assert.match(text, /ANTHROPIC_SMALL_FAST_MODEL='claude-haiku-4-5'/)
+    assert.match(text, /ANTHROPIC_SMALL_FAST_MODEL='claude-haiku-5-5'/)
     assert.match(text, /claudeCode\.environmentVariables/)
     assert.match(text, /disableLoginPrompt/)
     // The generated script never points at a raw key in a URL — it writes config to files.
@@ -898,14 +960,14 @@ describe('setup endpoint', () => {
   })
 
   test('returns a PowerShell script (os=windows) that carries the key and models', async () => {
-    const { key } = store.create({ name: 'W', plan: 'pro', planDays: 30 })
+    const { key } = store.create({ name: 'W', plan: 'pro' })
     const res = await fetch(`${base}/api/setup?key=${key}&os=windows`)
     assert.equal(res.status, 200)
     assert.match(res.headers.get('content-disposition') ?? '', /agentshop-setup\.ps1/)
     const text = await res.text()
     assert.ok(text.includes(`$ApiKey = '${key}'`), 'script embeds the caller\'s key')
     assert.match(text, /\$Model = 'claude-sonnet-5-5'/)
-    assert.match(text, /\$SmallModel = 'claude-haiku-4-5'/)
+    assert.match(text, /\$SmallModel = 'claude-haiku-5-5'/)
     assert.match(text, /claudeCode\.environmentVariables/)
     assert.match(text, /disableLoginPrompt/)
     assert.match(text, /npm\.cmd install -g @anthropic-ai\/claude-code/)
@@ -983,15 +1045,15 @@ describe('setup endpoint', () => {
   })
 
   test('rejects missing or invalid os', async () => {
-    const { key } = store.create({ name: 'O', plan: 'pro', planDays: 30 })
+    const { key } = store.create({ name: 'O', plan: 'pro' })
     assert.equal((await fetch(`${base}/api/setup?key=${key}`)).status, 400)
     assert.equal((await fetch(`${base}/api/setup?key=${key}&os=android`)).status, 400)
   })
 
   test('rejects unknown, revoked, expired and unassigned keys', async () => {
-    const revoked = store.create({ name: 'R', plan: 'pro', planDays: 30 })
+    const revoked = store.create({ name: 'R', plan: 'pro' })
     store.update(revoked.record.id, { status: 'revoked' })
-    const expired = store.create({ name: 'E', plan: 'pro', planDays: 1, expiresAt: '2020-01-01T00:00:00Z' })
+    const expired = store.create({ name: 'E', plan: 'pro', expiresAt: '2020-01-01T00:00:00Z' })
     const unassigned = store.create({ name: 'U' })
 
     const cases = [
@@ -1010,7 +1072,7 @@ describe('setup endpoint', () => {
 
   test('missing key → 400, wrong method → 405', async () => {
     assert.equal((await fetch(`${base}/api/setup?os=mac`)).status, 400)
-    const { key } = store.create({ name: 'A', plan: 'pro', planDays: 30 })
+    const { key } = store.create({ name: 'A', plan: 'pro' })
     assert.equal((await fetch(`${base}/api/setup?key=${key}&os=mac`, { method: 'POST' })).status, 405)
   })
 
@@ -1020,7 +1082,7 @@ describe('setup endpoint', () => {
     gw.listen(0)
     await once(gw, 'listening')
     try {
-      const { key } = store.create({ name: 'P', plan: 'pro', planDays: 30 })
+      const { key } = store.create({ name: 'P', plan: 'pro' })
       const gwBase = `http://127.0.0.1:${gw.address().port}`
       const win = await fetch(`${gwBase}/api/setup/windows/${key}`)
       assert.equal(win.status, 200)

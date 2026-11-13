@@ -1,5 +1,6 @@
 import { readBody, sendJson } from './http.js'
-import { ALLOWED_MODELS, convertedTokens, MODEL_WEIGHTS, PLANS } from './plans.js'
+import { ALLOWED_MODELS, convertedTokens, creditsForUsage, MODEL_RATES, normalizeModel, PLANS } from './plans.js'
+import { estimateRequestCredits } from './quota.js'
 import { fillInputTokens, looksTruncated, relayMessageStream } from './sse.js'
 import { estimateInputTokens } from './tokens.js'
 
@@ -70,56 +71,35 @@ function extractClientKey(req) {
 /* ------------------------------------------------------------------ usage page */
 
 /**
- * The quota page's data for a plan key, in the shape the frontend already reads
- * (tokensUsed/tokenBudget = current 5-hour session, sessionsUsed/maxSessions = this week).
+ * The quota page's data for a plan key. A paid pack is a credit budget with no time limit; the
+ * trial is a token budget with a time limit. Both are shown with the same fields so the page
+ * does not need to know which one it is looking at.
  */
 export function usageData(record, q) {
-  // A trial has one fixed allowance for its whole (short) duration: show that, not sessions and weeks.
-  if (q.plan.totalCap) {
-    return {
-      tier: q.plan.name,
-      tokensUsed: Math.round(q.totalUsed),
-      tokenBudget: q.plan.totalCap,
-      usagePercentage: (q.totalUsed / q.plan.totalCap) * 100,
-      windowEnd: record.expiresAt,
-      sessionsUsed: Math.round(q.totalUsed),
-      maxSessions: q.plan.totalCap,
-      weeklyLimitResetAt: null,
-      keyName: record.name,
-      keyExpiresAt: record.expiresAt,
-      upstreamExpiresAt: null,
-      upstreamIssuedAt: null,
-      upstreamPlan: null,
-      plan: record.plan,
-      planDays: record.planDays,
-      planStartedAt: record.planStartedAt,
-      available: Math.round(Math.max(0, q.plan.totalCap - q.totalUsed)),
-      dailyRefill: 0,
-      rentalUsed: Math.round(q.totalUsed),
-      rentalCap: q.plan.totalCap,
-    }
-  }
+  const free = q.plan.free
+  const used = free ? q.tokensUsed : q.creditsUsed
+  const cap = q.cap
   return {
     tier: q.plan.name,
-    tokensUsed: Math.round(q.sessionUsed),
-    tokenBudget: q.plan.sessionCap,
-    usagePercentage: (q.sessionUsed / q.plan.sessionCap) * 100,
-    windowEnd: q.sessionEnd,
-    sessionsUsed: Math.round(q.weekUsed),
-    maxSessions: q.plan.weeklyCap,
-    weeklyLimitResetAt: q.weekEnd,
+    // Credits for a paid pack, converted tokens for the trial.
+    unit: free ? 'token' : 'credit',
+    used: Math.round(used * 100) / 100,
+    cap: Math.round(cap * 100) / 100,
+    remaining: Math.round(q.remaining * 100) / 100,
+    usagePercentage: cap > 0 ? (used / cap) * 100 : 0,
+    // The trial's expiry; a paid pack never expires.
+    expiresAt: q.expiresAt,
+    startedAt: q.startedAt,
+    // Per-model breakdown of what the customer used, so they can see where the credits went.
+    models: q.models,
+    // True while requests are running and their credits are held back.
+    reserved: Math.round(q.reserved * 100) / 100,
     keyName: record.name,
     keyExpiresAt: record.expiresAt,
-    upstreamExpiresAt: null,
-    upstreamIssuedAt: null,
-    upstreamPlan: null,
     plan: record.plan,
-    planDays: record.planDays,
+    planMinutes: record.planMinutes,
     planStartedAt: record.planStartedAt,
-    available: Math.round(q.available),
-    dailyRefill: Math.round(q.dailyRefill),
-    rentalUsed: Math.round(q.totalUsed),
-    rentalCap: Math.round(q.rentalCap),
+    unlimited: q.unlimited,
   }
 }
 
@@ -153,22 +133,22 @@ const fmtTokens = (n) => (n >= 1e6 ? `${(n / 1e6).toLocaleString('vi-VN', { maxi
 
 /** Customer-facing (Vietnamese) reason for a blocked request; Claude Code shows it as is. */
 function limitMessage(check, plan) {
-  const at = check.retryAt ? vnTime.format(new Date(check.retryAt)) : null
   switch (check.limit) {
-    case 'rental':
-      if (plan.id === 'trial') return `Đã dùng hết ${fmtTokens(plan.totalCap)} dùng thử. Vui lòng liên hệ để mua gói Pro / Max.`
-      return `Gói ${plan.name} đã dùng hết hạn mức của thời gian thuê. Vui lòng gia hạn hoặc nâng gói.`
-    case 'week':
-      return `Đã dùng hết hạn mức tuần của gói ${plan.name} (${fmtTokens(plan.weeklyCap)}). Dùng tiếp được lúc ${at}.`
-    case 'session':
-      return `Đã dùng hết hạn mức phiên 5 giờ của gói ${plan.name} (${fmtTokens(plan.sessionCap)}). Dùng tiếp được lúc ${at}.`
+    case 'credits':
+      return `Gói ${plan.name} đã dùng hết ${fmtCredits(plan.credits)} được mua. Gói không tự nạp lại, vui lòng mua thêm gói để tiếp tục.`
+    case 'tokens':
+      return `Đã dùng hết ${fmtTokens(plan.tokenCap)} của gói dùng thử. Vui lòng liên hệ để mua gói Starter / Pro.`
+    case 'expired':
+      return `Gói dùng thử của bạn đã hết thời gian. Vui lòng liên hệ để mua gói chính thức.`
     default:
-      return `Đã dùng hết hạn mức đang có của gói ${plan.name}; mỗi ngày được cộng thêm ${fmtTokens(plan.weeklyCap / 7)}. Dùng tiếp được lúc ${at}.`
+      return `Gói ${plan.name} hiện không dùng được. Vui lòng liên hệ quản trị viên.`
   }
 }
 
-/** "claude-haiku-4-5-20251001" → "claude-haiku-4-5"; anything else unchanged. */
-const normalizeModel = (m) => (typeof m === 'string' ? m.trim().replace(/-\d{8}$/, '') : m)
+/** The pack still has credits, but not enough left for this one request (its worst case). */
+const notEnoughCredits = (plan, needed) =>
+  `Gói ${plan.name} không còn đủ credit cho yêu cầu này (cần tối đa ${fmtCredits(needed)}). Gói không tự nạp lại, vui lòng mua thêm gói để tiếp tục.`
+const fmtCredits = (n) => (n >= 1e6 ? `${(n / 1e6).toLocaleString('vi-VN', { maximumFractionDigits: 2 })}M` : `${n.toLocaleString('vi-VN', { maximumFractionDigits: 0 })}`) + ' credit'
 
 /** Requests currently running per key id (to cap concurrency). */
 const inFlight = new Map()
@@ -295,15 +275,37 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
   if (!request || typeof request !== 'object' || Array.isArray(request)) {
     return anthropicError(res, 400, 'invalid_request_error', 'Request body must be a JSON object.')
   }
-  // Dated ids from older configs (e.g. fallbackModels: "claude-haiku-4-5-20251001") mean the same model.
+  // Dated ids from older configs (e.g. fallbackModels: "claude-haiku-4-5-20251001") and older
+  // model ids (haiku 4.5 → haiku 5.5) mean the model we actually bill for.
   let forwardBody = body
-  const model = normalizeModel(request.model)
-  if (model !== request.model && MODEL_WEIGHTS[model]) {
+  let model = normalizeModel(request.model)
+  if (model !== request.model) {
     request.model = model
     forwardBody = Buffer.from(JSON.stringify(request))
   }
-  if (!MODEL_WEIGHTS[request.model]) {
+  if (!MODEL_RATES[model]) {
     return anthropicError(res, 400, 'invalid_request_error', `Model "${request.model}" is not available. Available models: ${ALLOWED_MODELS.join(', ')}`)
+  }
+
+  // The credit reservation this request holds. It is settled exactly once: by charge() when the
+  // answer arrives (real cost charged, reservation released), or by releaseReservation() when it
+  // does not (the request failed before producing an answer).
+  let reservation = 0
+  let settled = false
+  const releaseReservation = () => {
+    if (settled) return
+    settled = true
+    quota.release(record, reservation)
+  }
+  const charge = (usage) => {
+    if (settled) return
+    settled = true
+    quota.charge(record, {
+      credits: creditsForUsage(usage, request.model),
+      tokens: convertedTokens(usage),
+      model: request.model,
+      reserved: reservation,
+    })
   }
 
   if (route === 'messages') {
@@ -312,10 +314,22 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
       const retrySec = check.retryAt ? Math.max(1, Math.ceil((check.retryAt - Date.now()) / 1000)) : null
       return anthropicError(res, 429, 'rate_limit_error', limitMessage(check, PLANS[record.plan]), retrySec ? { 'retry-after': String(retrySec) } : {})
     }
+    // Hold back the worst-case credit cost of this request, so the answer can never push the
+    // account past the pack that was bought for this customer.
+    const estimate = estimateRequestCredits({
+      inputTokens: estimateInputTokens(request) ?? 0,
+      maxTokens: Number.isFinite(request.max_tokens) ? request.max_tokens : 0,
+    })
+    const held = quota.reserve(record, estimate)
+    if (!held.ok) {
+      return anthropicError(res, 429, 'rate_limit_error', notEnoughCredits(PLANS[record.plan], estimate))
+    }
+    reservation = held.reserve
   }
 
   const running = inFlight.get(record.id) ?? 0
   if (config.maxConcurrentPerKey > 0 && running >= config.maxConcurrentPerKey) {
+    releaseReservation()
     return anthropicError(
       res,
       429,
@@ -324,7 +338,10 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
       { 'retry-after': '2' },
     )
   }
-  if (!config.revidApiKey) return anthropicError(res, 503, 'api_error', 'AI service is not configured. Please contact the administrator.')
+  if (!config.revidApiKey) {
+    releaseReservation()
+    return anthropicError(res, 503, 'api_error', 'AI service is not configured. Please contact the administrator.')
+  }
 
   inFlight.set(record.id, running + 1)
   let released = false
@@ -363,6 +380,7 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
     })
   } catch (err) {
     release()
+    releaseReservation()
     if (clientAbort.signal.aborted) return
     return anthropicError(res, 502, 'api_error', UPSTREAM_DOWN)
   }
@@ -373,10 +391,6 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
   })
   const contentType = upstream.res.headers.get('content-type') ?? ''
   const chunks = bodyChunks(upstream.first, upstream.reader)
-  const charge = (usage) => {
-    const tokens = convertedTokens(usage, request.model)
-    quota.charge(record, tokens)
-  }
 
   try {
     // Claude Code's main path: a streamed answer, relayed event by event (see sse.js), usage charged at the end.
@@ -423,6 +437,9 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
     upstream.abort()
     res.destroy()
   } finally {
+    // A request that produced no usage (error, or an answer we could not read) is not charged;
+    // its reservation goes back so the customer's credits are not lost.
+    releaseReservation()
     release()
   }
 }

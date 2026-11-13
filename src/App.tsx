@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Dashboard } from './components/Dashboard'
 import { AlertIcon, ClockIcon, KeyIcon, ShieldIcon } from './components/Icons'
 import { KeyForm } from './components/KeyForm'
 import { Topbar } from './components/Topbar'
 import { ApiError, checkUsage, type UsageData } from './lib/api'
-import { decodeKey } from './lib/keyInfo'
 import { savedKey } from './lib/savedKey'
 
 const AUTO_REFRESH_MS = 60_000
@@ -24,8 +23,6 @@ export default function App() {
   const [lastChecked, setLastChecked] = useState<Date | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
-
-  const keyInfo = useMemo(() => (checkedKey ? decodeKey(checkedKey) : null), [checkedKey])
 
   const runCheck = useCallback(
     async (rawKey: string) => {
@@ -85,7 +82,7 @@ export default function App() {
       <main className="container">
         <section className="hero">
           <h1>Kiểm tra hạn mức sử dụng AI</h1>
-          <p>Nhập API key để xem lượng token đã dùng, hạn mức còn lại và thời điểm được làm mới.</p>
+          <p>Nhập API key để xem số credit/token đã dùng, hạn mức còn lại và thời hạn của gói.</p>
         </section>
 
         <div className="card card--form">
@@ -112,7 +109,6 @@ export default function App() {
         {data && lastChecked ? (
           <Dashboard
             data={data}
-            keyInfo={keyInfo}
             now={lastChecked.getTime()}
             lastChecked={lastChecked}
             loading={loading}
@@ -137,8 +133,8 @@ export default function App() {
 function EmptyState() {
   const items = [
     { icon: <KeyIcon />, title: 'Dán API key', text: 'Key có dạng ak_… do quản trị viên cấp cho bạn.' },
-    { icon: <ClockIcon />, title: 'Theo dõi chu kỳ', text: 'Xem thời gian đặt lại hạn mức theo chu kỳ và theo tuần.' },
-    { icon: <ShieldIcon />, title: 'Hạn sử dụng key', text: 'Biết chính xác khi nào key hết hạn để gia hạn kịp thời.' },
+    { icon: <ClockIcon />, title: 'Theo dõi gói', text: 'Gói trả phí không thời hạn, dùng khi nào cũng được cho tới khi hết credit.' },
+    { icon: <ShieldIcon />, title: 'Hạn dùng thử', text: 'Gói dùng thử miễn phí có hạn theo phút và tối đa 100.000 token.' },
   ]
   return (
     <section className="empty">

@@ -1,5 +1,5 @@
 // Key management from the server shell, e.g.:
-//   docker exec quota-gateway node src/cli.js create --name "Khách A" --plan pro --days 30
+//   docker exec quota-gateway node src/cli.js create --name "Khách A" --plan pro
 import { rmSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { loadConfig } from './config.js'
@@ -10,10 +10,13 @@ const USAGE = `Cách dùng: node src/cli.js <lệnh> [tham số]
 
   list                                         Liệt kê key
   show <id>                                    Xem chi tiết key
-  create --name <tên> --plan <pro|max5x|max20x|trial> --days <số ngày | 6h>
-         [--note <ghi chú>]                    Tạo key mới với gói thuê và in ra key
-  plan <id> <pro|max5x|max20x|trial|none> [số ngày | 6h]  Gán gói / gia hạn: bắt đầu thời gian thuê mới từ bây giờ
-                                               (hạn mức dùng tính lại từ 0, hạn dùng = bây giờ + số ngày)
+  create --name <tên> --plan <trial|starter|pro|business|enterprise> [--minutes <số phút>]
+         [--note <ghi chú>]                    Tạo key mới với gói và in ra key. Gói trả phí (starter/pro/
+                                                business/enterprise) không có thời hạn; gói trial dùng tối đa
+                                                100k token trong số phút (mặc định 60).
+  plan <id> <trial|starter|pro|business|enterprise|none> [số phút]
+                                               Gán gói / đổi gói: bắt đầu kỳ dùng mới từ bây giờ
+                                               (số liệu dùng tính lại từ 0). Chỉ gói trial nhận số phút.
   expires <id> <ngày ISO|never>                Đặt hạn dùng, vd 2026-12-31 hoặc 2026-12-31T23:59:59+07:00
   rename <id> <tên>                            Đổi tên
   revoke <id>                                  Thu hồi key
@@ -28,7 +31,7 @@ const { positionals, values } = parseArgs({
   options: {
     name: { type: 'string' },
     plan: { type: 'string' },
-    days: { type: 'string' },
+    minutes: { type: 'string' },
     expires: { type: 'string' },
     note: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
@@ -75,9 +78,11 @@ try {
           id: k.id,
           name: k.name,
           key: k.keyPrefix,
-          plan: k.planName ? `${k.planName} ${k.planDays}d` : '-',
+          plan: k.planName
+            ? `${k.planName}${k.plan !== 'trial' ? '' : k.planMinutes ? ` ${k.planMinutes} phút` : ''}`
+            : '-',
           status: k.effectiveStatus,
-          expiresAt: k.expiresAt ?? 'never',
+          expiresAt: k.expiresAt ?? 'không thời hạn',
           lastUsedAt: k.lastUsedAt ?? '-',
           requests: k.requestCount,
         })),
@@ -87,11 +92,19 @@ try {
       printRecord(store.get(id()))
       break
     case 'create':
-      printNewKey(store.create({ name: values.name, plan: values.plan, planDays: values.days, note: values.note }))
+      printNewKey(
+        store.create({
+          name: values.name,
+          plan: values.plan,
+          planMinutes: values.minutes,
+          note: values.note,
+        }),
+      )
       break
     case 'plan': {
-      const value = arg(1, '<pro|max5x|max20x|trial|none>')
-      printRecord(store.update(id(), value === 'none' ? { plan: null } : { plan: value, planDays: args[2] }))
+      const value = arg(1, '<trial|starter|pro|business|enterprise|none>')
+      const patch = value === 'none' ? { plan: null } : { plan: value, planMinutes: args[2] }
+      printRecord(store.update(id(), patch))
       break
     }
     case 'expires':

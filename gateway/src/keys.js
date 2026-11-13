@@ -1,5 +1,5 @@
 import { decrypt, encrypt, generateKey, sha256 } from './crypto.js'
-import { DAY_MS, PLAN_IDS, PLANS } from './plans.js'
+import { DAY_MS, MINUTE_MS, PLAN_IDS, PLANS } from './plans.js'
 
 export class StoreError extends Error {
   constructor(status, message) {
@@ -11,8 +11,10 @@ export class StoreError extends Error {
 const nowIso = () => new Date().toISOString()
 const maskKey = (k) => (k.length <= 12 ? `${k.slice(0, 3)}…` : `${k.slice(0, 6)}…${k.slice(-4)}`)
 
-const PATCHABLE = new Set(['name', 'note', 'upstreamKey', 'expiresAt', 'status', 'plan', 'planDays'])
-const DEFAULT_PLAN_DAYS = 30
+const PATCHABLE = new Set(['name', 'note', 'upstreamKey', 'expiresAt', 'status', 'plan', 'planMinutes'])
+
+/** Old plan ids (session/week caps) → the credit pack that replaces them. */
+const PLAN_REMAP = { pro: 'pro', max5x: 'business', max20x: 'enterprise', trial: 'trial' }
 
 /** undefined = leave unchanged, null = remove the plan. */
 function normPlan(v) {
@@ -23,17 +25,16 @@ function normPlan(v) {
 }
 
 /**
- * Rental length in days. Fractions are allowed down to one hour (trials), and "6h" means 6 hours.
- * Stored with minute precision.
+ * Trial length in minutes. The trial is the only plan with a time limit (a paid pack is a
+ * credit budget that never expires), so this is only meaningful for plan = "trial".
  */
-function normDays(v) {
+function normMinutes(v) {
   if (v === undefined || v === null || v === '') return undefined
-  const text = String(v).trim().toLowerCase()
-  const n = text.endsWith('h') ? Number(text.slice(0, -1)) / 24 : Number(text)
-  if (!Number.isFinite(n) || n < 1 / 24 - 1e-9 || n > 366) {
-    throw new StoreError(400, 'planDays must be between 1 hour ("1h" or 0.0417) and 366 days')
+  const n = Number(v)
+  if (!Number.isFinite(n) || n < 1 || n > 366 * 24 * 60) {
+    throw new StoreError(400, 'planMinutes must be between 1 minute and 525600 minutes (366 days)')
   }
-  return Math.round(n * 1440) / 1440
+  return Math.round(n)
 }
 
 function normName(v) {
@@ -117,6 +118,7 @@ function toPublic(row) {
     plan: row.plan ?? null,
     planName: PLANS[row.plan]?.name ?? null,
     planDays: row.plan_days ?? null,
+    planMinutes: row.plan_minutes ?? null,
     planStartedAt: row.plan_started_at ?? null,
   }
 }
@@ -133,12 +135,12 @@ export class KeyStore {
     this.#prefix = keyPrefix
     this.#now = now
     this.#migrateToPlans()
+    this.#migrateToCreditPacks()
   }
 
   /**
-   * One-off, when the gateway moved from agentshop to revidapi: every key that was linked to an agentshop key
-   * gets the Pro plan for the days it had left (the earlier of its own expiry and the agentshop key's), so
-   * customers keep working after the deploy. The admin then adjusts plans in /admin. Runs once per database.
+   * One-off, when the gateway moved from agentshop to revidapi: every key that was linked to an
+   * agentshop key gets a paid plan, so customers keep working after the deploy. Runs once per database.
    */
   #migrateToPlans() {
     const done = this.#db.prepare("SELECT value FROM gateway_meta WHERE key = 'plans_migrated_at'").get()
@@ -146,20 +148,40 @@ export class KeyStore {
     const now = this.#now()
     const rows = this.#db.prepare('SELECT * FROM api_keys WHERE plan IS NULL AND upstream_key_enc IS NOT NULL').all()
     for (const row of rows) {
-      let upstreamEnd = null
-      try {
-        upstreamEnd = Date.parse(decodeUpstreamKey(decrypt(row.upstream_key_enc, this.#encKey))?.expiresAt ?? '') || null
-      } catch {
-        /* undecryptable or not a JWT: fall back to the key's own expiry */
-      }
-      const ends = [row.expires_at ? Date.parse(row.expires_at) : null, upstreamEnd].filter((t) => Number.isFinite(t))
-      const end = ends.length ? Math.min(...ends) : now + DEFAULT_PLAN_DAYS * DAY_MS
-      const days = Math.min(366, Math.max(1, Math.ceil((end - now) / DAY_MS)))
       this.#db
-        .prepare('UPDATE api_keys SET plan = ?, plan_days = ?, plan_started_at = ?, expires_at = ?, updated_at = ? WHERE id = ?')
-        .run('pro', days, new Date(now).toISOString(), new Date(end).toISOString(), nowIso(), row.id)
+        .prepare('UPDATE api_keys SET plan = ?, plan_started_at = ?, expires_at = NULL, updated_at = ? WHERE id = ?')
+        .run('pro', new Date(now).toISOString(), nowIso(), row.id)
     }
     this.#db.prepare("INSERT INTO gateway_meta (key, value) VALUES ('plans_migrated_at', ?)").run(new Date(now).toISOString())
+  }
+
+  /**
+   * One-off, when the plans became credit packs: every key gets the matching pack, usage counters
+   * reset to zero, paid keys stop expiring (use it whenever, until the credits run out), trials
+   * keep their time limit - now in minutes. Runs once per database.
+   * Old plan ids (session/week caps) map to credit packs; the metering changed, so counters start from zero.
+   */
+  #migrateToCreditPacks() {
+    const done = this.#db.prepare("SELECT value FROM gateway_meta WHERE key = 'credits_migrated_at'").get()
+    if (done) return
+    const now = this.#now()
+    const rows = this.#db.prepare('SELECT * FROM api_keys WHERE plan IS NOT NULL').all()
+    for (const row of rows) {
+      const plan = PLAN_REMAP[row.plan] ?? 'pro'
+      const started = new Date(now).toISOString()
+      if (PLANS[plan].free) {
+        const minutes = Math.max(1, Math.round((row.plan_days ?? 0) * 1440) || PLANS[plan].defaultMinutes)
+        this.#db
+          .prepare('UPDATE api_keys SET plan = ?, plan_days = NULL, plan_minutes = ?, plan_started_at = ?, expires_at = ?, updated_at = ? WHERE id = ?')
+          .run(plan, minutes, started, new Date(now + minutes * MINUTE_MS).toISOString(), nowIso(), row.id)
+      } else {
+        this.#db
+          .prepare('UPDATE api_keys SET plan = ?, plan_days = NULL, plan_minutes = NULL, plan_started_at = ?, expires_at = NULL, updated_at = ? WHERE id = ?')
+          .run(plan, started, nowIso(), row.id)
+      }
+      this.#db.prepare("DELETE FROM key_usage WHERE key_id = ?").run(row.id)
+    }
+    this.#db.prepare("INSERT INTO gateway_meta (key, value) VALUES ('credits_migrated_at', ?)").run(new Date(now).toISOString())
   }
 
   list() {
@@ -170,14 +192,15 @@ export class KeyStore {
     return toPublic(this.#row(id))
   }
 
-  create({ name, note, upstreamKey, expiresAt, plan, planDays } = {}) {
+  create({ name, note, upstreamKey, expiresAt, plan, planMinutes } = {}) {
     const n = normName(name)
     const up = normUpstream(upstreamKey) ?? null
     const p = normPlan(plan) ?? null
-    const days = p ? normDays(planDays) ?? DEFAULT_PLAN_DAYS : null
     const started = p ? this.#now() : null
-    // A plan rental ends after its days; an explicit expiresAt still wins.
-    const exp = normExpiresAt(expiresAt) ?? (p ? new Date(started + days * DAY_MS).toISOString() : null)
+    // The trial is limited in minutes; a paid pack has no time limit.
+    const minutes = p && PLANS[p].free ? normMinutes(planMinutes) ?? PLANS[p].defaultMinutes : null
+    // A trial expires when its minutes are up; a paid pack never expires (an explicit expiresAt still wins).
+    const exp = normExpiresAt(expiresAt) ?? (minutes ? new Date(started + minutes * MINUTE_MS).toISOString() : null)
     const fp = up ? sha256(up) : null
     if (fp) this.#assertUpstreamFree(fp)
 
@@ -187,13 +210,13 @@ export class KeyStore {
       .prepare(
         `INSERT INTO api_keys
            (name, note, key_hash, key_prefix, key_enc, upstream_key_enc, upstream_fingerprint, upstream_hint, expires_at, created_at, updated_at,
-            plan, plan_days, plan_started_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            plan, plan_days, plan_minutes, plan_started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
       )
       .run(
         n, normNote(note), sha256(key), this.#displayPrefix(key), encrypt(key, this.#encKey),
         up ? encrypt(up, this.#encKey) : null, fp, up ? maskKey(up) : null, exp, ts, ts,
-        p, days, started === null ? null : new Date(started).toISOString(),
+        p, minutes, started === null ? null : new Date(started).toISOString(),
       )
     return { key, record: this.get(Number(lastInsertRowid)) }
   }
@@ -226,22 +249,26 @@ export class KeyStore {
     }
     const exp = normExpiresAt(patch.expiresAt)
     const p = normPlan(patch.plan)
-    const days = normDays(patch.planDays)
+    const minutes = normMinutes(patch.planMinutes)
     if (p === null) {
       set('plan', null)
       set('plan_days', null)
+      set('plan_minutes', null)
       set('plan_started_at', null)
-    } else if (p !== undefined || days !== undefined) {
-      // Changing the plan or the number of days starts a new rental from now, with fresh usage counters.
+    } else if (p !== undefined || minutes !== undefined) {
+      // Changing the plan (or the trial length) starts a new rental from now, with fresh usage.
       const row = this.#row(id)
       const plan = p ?? row.plan
-      if (!plan) throw new StoreError(400, 'plan is required to set planDays')
-      const d = days ?? row.plan_days ?? DEFAULT_PLAN_DAYS
+      if (!plan) throw new StoreError(400, 'plan is required to set planMinutes')
+      const m =
+        minutes ??
+        (PLANS[plan].free ? (row.plan_minutes ?? PLANS[plan].defaultMinutes) : null)
       const started = this.#now()
       set('plan', plan)
-      set('plan_days', d)
+      set('plan_days', null)
+      set('plan_minutes', m)
       set('plan_started_at', new Date(started).toISOString())
-      if (exp === undefined) set('expires_at', new Date(started + d * DAY_MS).toISOString())
+      if (exp === undefined) set('expires_at', m ? new Date(started + m * MINUTE_MS).toISOString() : null)
     }
     if (exp !== undefined) set('expires_at', exp)
     if (patch.status !== undefined) {

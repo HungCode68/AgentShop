@@ -359,19 +359,28 @@ code {
 
 /* ---------- Usage panel ---------- */
 .usage {
-  display: grid;
-  grid-template-columns: auto 1fr 1fr;
-  gap: 12px 28px;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: stretch;
   padding: 14px 4px 4px;
-}
-.usage .inline-error {
-  grid-column: 1 / -1;
 }
 .usage__meta {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 4px;
+}
+.usage__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+}
+.usage__models {
+  margin-top: 4px;
+}
+.usage__models td {
+  font-variant-numeric: tabular-nums;
 }
 .meter {
   display: flex;
@@ -763,12 +772,21 @@ textarea {
 .pc-tile--muted .pc-tile__value {
   color: var(--text-2);
 }
-.pc-table tbody tr {
-  cursor: pointer;
-}
 .pc-table td {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+.pc-notes {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.pc-notes li::marker {
+  color: var(--accent);
 }
 .pc-row--on td {
   background: var(--accent-soft);

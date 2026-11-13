@@ -23,7 +23,6 @@ import { NewKeyDialog } from './NewKeyDialog'
 import { PricingCalculator } from './PricingCalculator'
 import { ConfirmDialog } from './ui'
 import { UsagePanel } from './UsagePanel'
-import { formatPlanDuration } from '../lib/format'
 import { copyLater, formatShort, relativeTime, tokenStorage } from './util'
 import './admin.css'
 
@@ -373,7 +372,7 @@ function KeysView({ api, initialKeys, onUnauthorized }: KeysViewProps) {
       <div className="admin__head">
         <div>
           <h1>API key của khách</h1>
-          <p className="muted small">Mỗi key ak_ thuê một gói (Pro / Max 5x / Max 20x) theo số ngày; gateway tự đếm hạn mức. Bấm biểu tượng sao chép ở mỗi dòng để lấy lại key của khách khi cần.</p>
+          <p className="muted small">Mỗi key ak_ mua một gói credit (Starter / Pro / Business / Enterprise) không thời hạn, hoặc gói dùng thử theo phút; gateway tự đếm hạn mức. Bấm biểu tượng sao chép ở mỗi dòng để lấy lại key của khách khi cần.</p>
         </div>
         <div className="admin__actions">
           <button type="button" className="btn btn--ghost" onClick={refresh} disabled={loading}>
@@ -461,7 +460,9 @@ function KeysView({ api, initialKeys, onUnauthorized }: KeysViewProps) {
                       {k.plan ? (
                         <span className="stack">
                           <b>{k.planName}</b>
-                          <span className="muted small">{k.planDays != null ? formatPlanDuration(k.planDays) : ''}</span>
+                          <span className="muted small">
+                            {k.plan === 'trial' && k.planMinutes != null ? `${k.planMinutes} phút` : 'không thời hạn'}
+                          </span>
                         </span>
                       ) : (
                         <span className="muted">Chưa có gói</span>

@@ -1,10 +1,9 @@
 import { sendJson } from './http.js'
 
-// Models agentshop supports, verified live — pinned into the generated scripts so a fresh
-// install can never fall back to an unsupported default (fable, dated haiku, …) and stall
-// in 400/retry loops.
+// The models we serve, pinned into the generated scripts so a fresh install can never fall back
+// to an unsupported default (fable, dated haiku, …) and stall in 400/retry loops.
 const DEFAULT_MODEL = 'claude-sonnet-5-5'
-const DEFAULT_SMALL_MODEL = 'claude-haiku-4-5'
+const DEFAULT_SMALL_MODEL = 'claude-haiku-5-5'
 const FALLBACK_HOST = 'https://agentshop.id.vn/api/proxy'
 
 const REASON_STATUS = { invalid: 401, revoked: 403, expired: 403, unassigned: 403 }

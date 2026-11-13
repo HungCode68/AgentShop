@@ -1,7 +1,7 @@
 import { API_BASE, translate, type UsageData } from '../lib/api'
 
 export type KeyStatus = 'active' | 'expired' | 'revoked' | 'unassigned'
-export type PlanId = 'pro' | 'max5x' | 'max20x' | 'trial'
+export type PlanId = 'trial' | 'starter' | 'pro' | 'business' | 'enterprise'
 
 /** Mirrors the gateway's public key record (never contains the full client or upstream key). */
 export interface KeyRecord {
@@ -19,10 +19,13 @@ export interface KeyRecord {
   updatedAt: string
   lastUsedAt: string | null
   requestCount: number
-  /** The rented plan (null = none yet: the key cannot be used). */
+  /** The rented pack (null = none yet: the key cannot be used). */
   plan: PlanId | null
   planName: string | null
+  /** Legacy field, now always null (paid packs have no rental length; the trial uses planMinutes). */
   planDays: number | null
+  /** The trial's length in minutes (paid packs: null). */
+  planMinutes: number | null
   planStartedAt: string | null
 }
 
@@ -34,9 +37,9 @@ export interface IssuedKey {
 export interface KeyInput {
   name?: string
   note?: string | null
-  /** Setting plan and/or planDays starts a new rental from now (usage resets, expiry = now + days). */
+  /** Setting plan and/or planMinutes starts a new period from now (usage resets; the trial then expires = now + minutes, a paid pack never expires). */
   plan?: PlanId | null
-  planDays?: number
+  planMinutes?: number
   expiresAt?: string | null
   status?: 'active' | 'revoked'
 }
@@ -78,8 +81,8 @@ const ERRORS_VI: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/^Key is not linked to an upstream account yet\.$/, () => 'Key chưa được gán key agentshop.'],
   [/^Key has no plan yet\.$/, () => 'Key chưa có gói.'],
   [/^plan must be one of/, () => 'Gói không hợp lệ.'],
-  [/^planDays must be/, () => 'Số ngày thuê phải là số nguyên từ 1 đến 366.'],
-  [/^plan is required to set planDays$/, () => 'Cần chọn gói trước khi đặt số ngày thuê.'],
+  [/^planMinutes must be/, () => 'Thời gian dùng thử phải là số phút từ 1 tới 525600.'],
+  [/^plan is required to set planMinutes$/, () => 'Cần chọn gói trước khi đặt thời gian dùng thử.'],
   [/^This key was created before key copying/, () => 'Key này được tạo trước khi có tính năng sao chép. Hãy cấp lại key để có thể sao chép.'],
 ]
 
