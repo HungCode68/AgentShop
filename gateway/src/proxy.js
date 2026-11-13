@@ -137,7 +137,7 @@ function limitMessage(check, plan) {
     case 'credits':
       return `Gói ${plan.name} đã dùng hết ${fmtCredits(plan.credits)} được mua. Gói không tự nạp lại, vui lòng mua thêm gói để tiếp tục.`
     case 'tokens':
-      return `Đã dùng hết ${fmtTokens(plan.tokenCap)} của gói dùng thử. Vui lòng liên hệ để mua gói Starter / Pro.`
+      return `Đã dùng hết ${fmtTokens(plan.tokenCap)} của gói dùng thử. Vui lòng liên hệ để mua gói Mini / Starter (xem bảng giá tại /bang-gia).`
     case 'expired':
       return `Gói dùng thử của bạn đã hết thời gian. Vui lòng liên hệ để mua gói chính thức.`
     default:

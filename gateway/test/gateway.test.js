@@ -218,6 +218,7 @@ describe('plans and cost accounting', () => {
 
   test('a plan is capped in credits; the trial in tokens', () => {
     assert.equal(planCap(PLANS.pro), PLANS.pro.credits)
+    assert.equal(planCap(PLANS.mini), 500)
     assert.equal(planCap(PLANS.starter), 1_500)
     assert.equal(planCap(PLANS.business), 13_000)
     assert.equal(planCap(PLANS.enterprise), 30_000)

@@ -7,8 +7,16 @@ import './styles.css'
 const AdminApp = lazy(() => import('./admin/AdminApp'))
 // /huong-dan is the step-by-step Chatbox setup guide, also loaded on demand.
 const GuidePage = lazy(() => import('./guide/GuidePage'))
+// /bang-gia is the public price list to send to customers, also loaded on demand.
+const PricingPage = lazy(() => import('./pricing/PricingPage'))
 const path = window.location.pathname
-const Page = /^\/admin\/?$/.test(path) ? AdminApp : /^\/huong-dan\/?$/.test(path) ? GuidePage : null
+const Page = /^\/admin\/?$/.test(path)
+  ? AdminApp
+  : /^\/huong-dan\/?$/.test(path)
+    ? GuidePage
+    : /^\/bang-gia\/?$/.test(path)
+      ? PricingPage
+      : null
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

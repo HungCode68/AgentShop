@@ -151,6 +151,7 @@ Toàn bộ request AI đi qua **một** key tài khoản revidapi (`REVID_API_KE
 
 | Gói | Credit | Giá vốn (revid) | Giá bán | Thời hạn |
 | --- | --- | --- | --- | --- |
+| `mini` | 500 | ~33.000đ (500 credit theo giá Starter của revid) | 40.000đ | không thời hạn |
 | `starter` | 1.500 | 99.000đ | 130.000đ | không thời hạn |
 | `pro` | 5.000 | 279.000đ | 300.000đ | không thời hạn |
 | `business` | 13.000 | 679.000đ | 700.000đ | không thời hạn |

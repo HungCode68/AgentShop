@@ -108,7 +108,7 @@ Tóm tắt cấu hình Nginx:
 ### Cách nhanh: trang quản trị
 
 Mở `https://agentshop.id.vn/admin` (trang check quota không có nút dẫn tới đây) và nhập `GATEWAY_ADMIN_TOKEN`. Trên trang này bạn có thể:
-- Tạo key: điền tên khách, chọn gói credit (Starter / Pro / Business / Enterprise — không thời hạn, dùng tới khi hết credit) hoặc **Dùng thử** (miễn phí, tối đa 100k token, thời gian tính theo phút, mặc định 60). Sau khi tạo sẽ hiện key `ak_...` kèm sẵn link check quota và cấu hình Claude Code để gửi cho khách.
+- Tạo key: điền tên khách, chọn gói credit (Mini / Starter / Pro / Business / Enterprise — không thời hạn, dùng tới khi hết credit) hoặc **Dùng thử** (miễn phí, tối đa 100k token, thời gian tính theo phút, mặc định 60). Sau khi tạo sẽ hiện key `ak_...` kèm sẵn link check quota và cấu hình Claude Code để gửi cho khách.
 - Đổi gói / mua thêm: bấm Sửa → tích "Đổi gói / bắt đầu kỳ mới" → chọn gói. Kỳ mới bắt đầu từ lúc lưu, số liệu đã dùng tính lại từ 0.
 - Sao chép lại key của khách bất cứ lúc nào bằng nút sao chép ở mỗi dòng (key tạo trước khi có tính năng này cần "Cấp lại key" một lần).
 - Xem hạn mức của từng khách (credit đã dùng / còn lại, credit đang giữ chỗ, token và credit theo từng model) và số dư credit revidapi ở đầu trang (cảnh báo khi dưới `REVID_LOW_CREDITS`, mặc định 300).

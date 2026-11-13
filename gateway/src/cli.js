@@ -10,11 +10,11 @@ const USAGE = `Cách dùng: node src/cli.js <lệnh> [tham số]
 
   list                                         Liệt kê key
   show <id>                                    Xem chi tiết key
-  create --name <tên> --plan <trial|starter|pro|business|enterprise> [--minutes <số phút>]
+  create --name <tên> --plan <trial|mini|starter|pro|business|enterprise> [--minutes <số phút>]
          [--note <ghi chú>]                    Tạo key mới với gói và in ra key. Gói trả phí (starter/pro/
                                                 business/enterprise) không có thời hạn; gói trial dùng tối đa
                                                 100k token trong số phút (mặc định 60).
-  plan <id> <trial|starter|pro|business|enterprise|none> [số phút]
+  plan <id> <trial|mini|starter|pro|business|enterprise|none> [số phút]
                                                Gán gói / đổi gói: bắt đầu kỳ dùng mới từ bây giờ
                                                (số liệu dùng tính lại từ 0). Chỉ gói trial nhận số phút.
   expires <id> <ngày ISO|never>                Đặt hạn dùng, vd 2026-12-31 hoặc 2026-12-31T23:59:59+07:00
@@ -102,7 +102,7 @@ try {
       )
       break
     case 'plan': {
-      const value = arg(1, '<trial|starter|pro|business|enterprise|none>')
+      const value = arg(1, '<trial|mini|starter|pro|business|enterprise|none>')
       const patch = value === 'none' ? { plan: null } : { plan: value, planMinutes: args[2] }
       printRecord(store.update(id(), patch))
       break

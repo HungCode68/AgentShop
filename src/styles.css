@@ -1089,8 +1089,16 @@ a.brand {
     padding-left: 16px;
     padding-right: 16px;
   }
-  .topbar__tag {
+  .topbar__tag,
+  .brand__name {
     display: none;
+  }
+  .topbar__nav {
+    gap: 6px;
+  }
+  .topbar__nav .btn--ghost {
+    padding: 0 10px;
+    font-size: 13px;
   }
   .copy-field {
     flex-wrap: wrap;

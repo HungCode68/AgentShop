@@ -112,6 +112,7 @@ export default function GuidePage() {
     <div className="app">
       <div className="bg-glow" aria-hidden />
       <Topbar>
+        <a className="btn btn--ghost" href="/bang-gia">Bảng giá</a>
         <a className="btn btn--ghost" href="/">Kiểm tra hạn mức</a>
       </Topbar>
 

@@ -76,7 +76,8 @@ export default function App() {
       <div className="bg-glow" aria-hidden />
       <Topbar>
         <span className="topbar__tag">AI Usage Dashboard</span>
-        <a className="btn btn--ghost" href="/huong-dan">Hướng dẫn dùng với Chatbox</a>
+        <a className="btn btn--ghost" href="/bang-gia">Bảng giá</a>
+        <a className="btn btn--ghost" href="/huong-dan">Hướng dẫn</a>
       </Topbar>
 
       <main className="container">

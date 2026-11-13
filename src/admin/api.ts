@@ -1,7 +1,7 @@
 import { API_BASE, translate, type UsageData } from '../lib/api'
 
 export type KeyStatus = 'active' | 'expired' | 'revoked' | 'unassigned'
-export type PlanId = 'trial' | 'starter' | 'pro' | 'business' | 'enterprise'
+export type PlanId = 'trial' | 'mini' | 'starter' | 'pro' | 'business' | 'enterprise'
 
 /** Mirrors the gateway's public key record (never contains the full client or upstream key). */
 export interface KeyRecord {

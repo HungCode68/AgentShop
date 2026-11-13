@@ -61,7 +61,7 @@ export const normalizeModel = (m) =>
 
 /**
  * The packs we sell. `credits` is what the customer may spend in total; `price` is what we
- * charge them (confirmed 2026-11-13: 130k / 300k / 700k / 1.400k).
+ * charge them (confirmed 2026-11-13: Mini 40k, Starter 130k, Pro 300k, Business 700k, Enterprise 1.400k).
  * A paid pack has no time limit: "use it whenever, until the credits run out".
  */
 export const PLANS = {
@@ -76,6 +76,7 @@ export const PLANS = {
     // Default trial length in minutes; the admin can set another one per key.
     defaultMinutes: 60,
   },
+  mini: { id: 'mini', name: 'Mini', free: false, credits: 500, tokenCap: null, price: 40_000 },
   starter: { id: 'starter', name: 'Starter', free: false, credits: 1_500, tokenCap: null, price: 130_000 },
   pro: { id: 'pro', name: 'Pro', free: false, credits: 5_000, tokenCap: null, price: 300_000 },
   business: { id: 'business', name: 'Business', free: false, credits: 13_000, tokenCap: null, price: 700_000 },
