@@ -54,21 +54,31 @@ export const MODEL_LABELS: Record<ModelId, string> = {
 }
 
 /**
- * A typical Claude Code turn: the conversation is re-read from revid's cache, a little is new,
- * and the answer is short. Tokens here are what Claude Code itself counts (cache included).
+ * Usage profiles for the token estimate, matching how revid estimates its own packs
+ * (revidapi.com/articles/bang-gia-api-ai-vi, read 2026-11-13):
+ *  - code: Claude Code / agents - context resent each turn, the repeated part read from cache.
+ *    A mix of 8 cache-read : 1 cache-write : 1 output reproduces revid's published Opus 5.5
+ *    figures (6,3M / 21M / 55M / 126M) within ~3%.
+ *  - chat: each question sent on its own, no cache - "~1.000 token vào và ~500 token ra".
+ * Tokens are what the client itself counts (cache included).
  */
-export const TYPICAL_TURN = { cacheRead: 40_000, cacheWrite: 2_000, output: 1_000 }
-
-/** Tokens one credit buys on `model` for the typical turn above. */
-export function tokensPerCredit(model: ModelId): number {
-  const r = MODEL_RATES[model]
-  const t = TYPICAL_TURN
-  const credits = (t.cacheRead * r.read + t.cacheWrite * r.write + t.output * r.out) / 1e6
-  return (t.cacheRead + t.cacheWrite + t.output) / credits
+export type UsageProfile = 'code' | 'chat'
+export const PROFILES: Record<UsageProfile, { label: string; input: number; cacheRead: number; cacheWrite: number; output: number }> = {
+  code: { label: 'Code / Claude Code', input: 0, cacheRead: 16_000, cacheWrite: 2_000, output: 2_000 },
+  chat: { label: 'Chat thường', input: 1_000, cacheRead: 0, cacheWrite: 0, output: 500 },
 }
 
-/** Rough tokens a pack is worth on `model`. An estimate for display; the credit count is the real limit. */
-export const tokensWorth = (credits: number, model: ModelId = 'claude-sonnet-5-5') => credits * tokensPerCredit(model)
+/** Tokens one credit buys on `model` for a usage profile. */
+export function tokensPerCredit(model: ModelId, profile: UsageProfile = 'code'): number {
+  const r = MODEL_RATES[model]
+  const t = PROFILES[profile]
+  const credits = (t.input * r.in + t.cacheRead * r.read + t.cacheWrite * r.write + t.output * r.out) / 1e6
+  return (t.input + t.cacheRead + t.cacheWrite + t.output) / credits
+}
+
+/** Rough tokens a pack is worth. An estimate for display; the credit count is the real limit. */
+export const tokensWorth = (credits: number, model: ModelId = 'claude-sonnet-5-5', profile: UsageProfile = 'code') =>
+  credits * tokensPerCredit(model, profile)
 
 /** Short token count: "25,4M", "1,2 tỷ". */
 export function fmtTokenCount(n: number): string {

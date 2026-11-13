@@ -119,7 +119,8 @@ export function KeyFormDialog({ record, onSubmit, onClose }: Props) {
                 <span className="field__hint">
                   <b>{pack.credits.toLocaleString('vi-VN')} credit</b> (mua từ revid: {vnd.format(pack.costVnd)}đ, bán: {vnd.format(pack.priceVnd)}đ) · không thời hạn, khách dùng khi nào cũng được · ước tính ~
                   {fmtTokenCount(tokensWorth(pack.credits, 'claude-sonnet-5-5'))} token Sonnet / {fmtTokenCount(tokensWorth(pack.credits, 'claude-opus-5-5'))} Opus /{' '}
-                  {fmtTokenCount(tokensWorth(pack.credits, 'claude-haiku-5-5'))} Haiku khi code bằng Claude Code
+                  {fmtTokenCount(tokensWorth(pack.credits, 'claude-haiku-5-5'))} Haiku khi code (chat thường: ~
+                  {fmtTokenCount(tokensWorth(pack.credits, 'claude-sonnet-5-5', 'chat'))} Sonnet)
                 </span>
               )}
               {isTrial && (
