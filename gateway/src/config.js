@@ -31,7 +31,7 @@ export function loadConfig(env = process.env, { requireAdminToken = true } = {})
   // threshold resends healthy requests and doubles their cost. A value above ~60s only helps its ~65s stalls.
   const hedgeAfterMs = Number(env.HEDGE_AFTER_MS ?? 0)
   if (!(hedgeAfterMs >= 0)) errors.push('HEDGE_AFTER_MS không hợp lệ (0 = tắt)')
-  const maxConcurrentPerKey = Number(env.MAX_CONCURRENT_PER_KEY ?? 3)
+  const maxConcurrentPerKey = Number(env.MAX_CONCURRENT_PER_KEY ?? 8)
   if (!Number.isInteger(maxConcurrentPerKey) || maxConcurrentPerKey < 0) errors.push('MAX_CONCURRENT_PER_KEY không hợp lệ (0 = không giới hạn)')
 
   if (errors.length) {

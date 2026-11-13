@@ -21,7 +21,7 @@ services:
       REVID_API_KEY: ${REVID_API_KEY:?REVID_API_KEY is required (key sk_ of the revidapi account)}
       REVID_LOW_CREDITS: ${REVID_LOW_CREDITS:-300}
       HEDGE_AFTER_MS: ${HEDGE_AFTER_MS:-0}
-      MAX_CONCURRENT_PER_KEY: ${MAX_CONCURRENT_PER_KEY:-3}
+      MAX_CONCURRENT_PER_KEY: ${MAX_CONCURRENT_PER_KEY:-8}
       UPSTREAM_BASE_URL: ${UPSTREAM_BASE_URL:-https://api.agentshop247.com/api}
       CORS_ORIGINS: ${CORS_ORIGINS:-https://agentshop.id.vn}
       PUBLIC_API_HOST: ${PUBLIC_API_HOST:-https://agentshop.id.vn/api/proxy}
