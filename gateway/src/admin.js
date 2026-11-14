@@ -79,10 +79,6 @@ export async function handleAdmin(req, res, url, { store, quota, config, fetchIm
   return notAllowed()
 }
 
-/**
- * revidapi account balance, from its GET /v1/usage (per account, the same for every key of the account).
- * Never throws: an unreachable revidapi is reported as {ok: false} so /admin can still load.
- */
 /** Last successful balance per config (one gateway = one config), served when revidapi hiccups. */
 const lastBalance = new WeakMap()
 
