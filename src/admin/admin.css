@@ -841,6 +841,22 @@ textarea {
 .balance .icon-btn {
   margin-left: auto;
 }
+.balance__tg {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.balance__tg + .icon-btn {
+  margin-left: 0;
+}
+.balance__tg-msg--ok {
+  color: var(--ok);
+}
+.balance__tg-msg--fail {
+  color: var(--danger);
+}
 .balance--low {
   border-color: color-mix(in srgb, var(--warn) 55%, transparent);
   background: var(--warn-soft);

@@ -593,6 +593,18 @@ function UpstreamBalanceCard({ api, onError }: { api: AdminApi; onError: (err: u
     return () => clearInterval(t)
   }, [load])
 
+  // "Gửi tin test Telegram": checks that the bot token + chat id on the server really deliver a message.
+  const [tgState, setTgState] = useState<{ status: 'idle' | 'sending' | 'ok' | 'fail'; message?: string }>({ status: 'idle' })
+  const sendTelegramTest = async () => {
+    setTgState({ status: 'sending' })
+    try {
+      const r = await api.telegramTest()
+      setTgState(r.ok ? { status: 'ok', message: 'Đã gửi, kiểm tra Telegram của bạn.' } : { status: 'fail', message: r.error })
+    } catch (err) {
+      if (!onError(err)) setTgState({ status: 'fail', message: (err as Error).message })
+    }
+  }
+
   const num = (v: number | null | undefined, digits = 1) => (v == null ? '—' : v.toLocaleString('vi-VN', { maximumFractionDigits: digits }))
   return (
     <div className={`card balance${data?.ok && data.lowBalance ? ' balance--low' : ''}`}>
@@ -619,6 +631,22 @@ function UpstreamBalanceCard({ api, onError }: { api: AdminApi; onError: (err: u
       ) : (
         data && <span className="small muted">{data.error}</span>
       )}
+      <div className="balance__tg">
+        {tgState.message && (
+          <span className={`small balance__tg-msg balance__tg-msg--${tgState.status}`} role="status">
+            {tgState.message}
+          </span>
+        )}
+        <button
+          type="button"
+          className="btn btn--ghost"
+          onClick={sendTelegramTest}
+          disabled={tgState.status === 'sending'}
+          title="Gửi một tin test tới Telegram nhận cảnh báo credit thấp"
+        >
+          {tgState.status === 'sending' ? 'Đang gửi…' : 'Gửi tin test Telegram'}
+        </button>
+      </div>
       <button type="button" className="icon-btn" onClick={load} disabled={loading} title="Tải lại số dư" aria-label="Tải lại số dư">
         <RefreshIcon width={16} height={16} className={loading ? 'spin' : undefined} />
       </button>

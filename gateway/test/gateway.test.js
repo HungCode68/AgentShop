@@ -885,6 +885,66 @@ describe('admin API', () => {
     assert.equal(usageFail, 0)
   })
 
+  describe('telegram test message', () => {
+    const tgConfig = { telegramBotToken: 'TG_SECRET_TOKEN', telegramChatId: '-100123' }
+    const adminAt = (gwBase, path, init = {}) =>
+      fetch(`${gwBase}/api/admin${path}`, { ...init, headers: { authorization: `Bearer ${ADMIN_TOKEN}`, ...init.headers } })
+
+    test('requires the admin token and POST', async () => {
+      assert.equal((await fetch(`${base}/api/admin/telegram-test`, { method: 'POST' })).status, 401)
+      assert.equal((await admin('/telegram-test')).status, 405)
+    })
+
+    test('not configured → ok:false and nothing is sent', async () => {
+      const sent = []
+      const fetchImpl = async (url) => { sent.push(String(url)); return { ok: true, json: async () => ({ ok: true }) } }
+      await withGateway({ extraConfig: { telegramBotToken: '', telegramChatId: '' }, fetchImpl }, async (gw) => {
+        const j = await (await adminAt(gw, '/telegram-test', { method: 'POST' })).json()
+        assert.equal(j.ok, false)
+        assert.match(j.error, /TELEGRAM/)
+      })
+      assert.equal(sent.length, 0)
+    })
+
+    test('configured → sends the message to the chat and answers ok', async () => {
+      const sent = []
+      const fetchImpl = async (url, init) => {
+        sent.push({ url: String(url), body: JSON.parse(init.body) })
+        return { ok: true, status: 200, json: async () => ({ ok: true }) }
+      }
+      await withGateway({ extraConfig: tgConfig, fetchImpl }, async (gw, lines) => {
+        const res = await adminAt(gw, '/telegram-test', { method: 'POST' })
+        assert.equal(res.status, 200)
+        assert.deepEqual(await res.json(), { ok: true })
+        assert.ok(!lines.join('\n').includes('TG_SECRET_TOKEN'), 'token never logged')
+      })
+      assert.equal(sent.length, 1)
+      assert.match(sent[0].url, /^https:\/\/api\.telegram\.org\/botTG_SECRET_TOKEN\/sendMessage$/)
+      assert.equal(sent[0].body.chat_id, '-100123')
+      assert.match(sent[0].body.text, /TEST/)
+    })
+
+    test('Telegram refuses → ok:false with its reason, token not leaked', async () => {
+      const fetchImpl = async () => ({ ok: false, status: 401, json: async () => ({ ok: false, error_code: 401, description: 'Unauthorized' }) })
+      await withGateway({ extraConfig: tgConfig, fetchImpl }, async (gw, lines) => {
+        const raw = await (await adminAt(gw, '/telegram-test', { method: 'POST' })).text()
+        const j = JSON.parse(raw)
+        assert.equal(j.ok, false)
+        assert.match(j.error, /401.*Unauthorized/)
+        assert.ok(!raw.includes('TG_SECRET_TOKEN'), 'token not in the response')
+        assert.ok(!lines.join('\n').includes('TG_SECRET_TOKEN'), 'token not in the log')
+      })
+    })
+
+    test('network failure → ok:false, no throw', async () => {
+      const fetchImpl = async () => { throw new Error('ECONNREFUSED') }
+      await withGateway({ extraConfig: tgConfig, fetchImpl }, async (gw) => {
+        const j = await (await adminAt(gw, '/telegram-test', { method: 'POST' })).json()
+        assert.deepEqual(j, { ok: false, error: 'ECONNREFUSED' })
+      })
+    })
+  })
+
   test('create with a pack → change the pack (fresh period) → rotate → delete', async () => {
     const created = await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'Khách A', plan: 'pro' }) })
     assert.equal(created.status, 201)

@@ -142,6 +142,8 @@ export function createAdminApi(token: string) {
     rotate: (id: number) => request<IssuedKey>(`/keys/${id}/rotate`, { method: 'POST' }),
     remove: (id: number) => request<void>(`/keys/${id}`, { method: 'DELETE' }),
     upstream: () => request<UpstreamBalance>('/upstream'),
+    /** Sends a test message to the Telegram alert chat. */
+    telegramTest: () => request<{ ok: true } | { ok: false; error: string }>('/telegram-test', { method: 'POST' }),
     revealKey: (id: number) => request<{ key: string }>(`/keys/${id}/key`).then((r) => r.key),
     usage: (id: number) => request<{ usage: UsageData }>(`/keys/${id}/usage`).then((r) => r.usage),
   }

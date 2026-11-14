@@ -1,6 +1,7 @@
 import { safeEqual } from './crypto.js'
 import { readJson, sendJson } from './http.js'
 import { usageData } from './proxy.js'
+import { sendTelegramMessage } from './telegram.js'
 
 /**
  * Admin API (Authorization: Bearer <ADMIN_TOKEN>), used by the /admin page and by curl.
@@ -13,6 +14,7 @@ import { usageData } from './proxy.js'
  *   POST   /api/admin/keys/:id/rotate   issue a new client key (old one stops working)
  *   GET    /api/admin/keys/:id/usage    plan usage of the key (credits or tokens used, remaining, per model)
  *   GET    /api/admin/upstream          revidapi account balance (credits) and today's use
+ *   POST   /api/admin/telegram-test     send a test message to the Telegram alert chat → {ok} | {ok: false, error}
  *   GET    /api/admin/keys/:id/key      the full client key, to copy it again
  *   DELETE /api/admin/keys/:id          delete
  */
@@ -29,6 +31,16 @@ export async function handleAdmin(req, res, url, { store, quota, config, fetchIm
   if (parts[0] === 'upstream' && parts.length === 1) {
     if (req.method !== 'GET') return sendJson(res, 405, { error: 'Method not allowed' })
     return sendJson(res, 200, await upstreamBalance({ config, fetchImpl, log }))
+  }
+  if (parts[0] === 'telegram-test' && parts.length === 1) {
+    if (req.method !== 'POST') return sendJson(res, 405, { error: 'Method not allowed' })
+    const r = await sendTelegramMessage({
+      config,
+      fetchImpl,
+      text: '✅ AgentShop — tin TEST từ trang admin. Nếu bạn nhận được tin này thì cảnh báo credit thấp sẽ gửi được tới đây.',
+    })
+    log?.(`${new Date().toISOString()} ${r.ok ? 'INFO telegram test message sent' : `WARN telegram test message failed: ${r.error}`}`)
+    return sendJson(res, 200, r)
   }
   if (parts[0] !== 'keys' || parts.length > 3) return sendJson(res, 404, { error: 'Not found' })
 

@@ -168,6 +168,7 @@ Toàn bộ request AI đi qua **một** key tài khoản revidapi (`REVID_API_KE
 - `HEDGE_AFTER_MS` (mặc định 0 = tắt): sau chừng ấy ms chưa có phản hồi thì gửi lại request lên revidapi và dùng bản trả lời trước (WARN `sending the request again`; khách chỉ bị trừ một lần). Tắt mặc định vì đo thực tế revidapi bình thường mất 6–30 giây mới trả byte đầu tiên: mốc ngắn sẽ gửi đôi request bình thường và tốn gấp đôi credit.
 - Lần đầu chạy bản này, key đang có gói được chuyển sang gói credit: `pro` → Pro, `max5x` → Business, `max20x` → Enterprise; key trả phí bỏ hạn dùng, key dùng thử giữ thời gian (đổi sang phút); số liệu dùng cũ được xoá vì đơn vị đã đổi. Chỉ chạy một lần (ghi `credits_migrated_at` trong bảng `gateway_meta`).
 - `GET /api/admin/upstream` đọc số dư credit revidapi (`/v1/usage` của revidapi, chung cho cả tài khoản).
+- `POST /api/admin/telegram-test` gửi một tin test tới Telegram nhận cảnh báo credit thấp (nút "Gửi tin test Telegram" trên trang `/admin`). Trả `{ok: true}` hoặc `{ok: false, error}` (lý do do Telegram báo, vd `HTTP 401: Unauthorized`; không bao giờ chứa token).
 
 ## Bảo mật
 

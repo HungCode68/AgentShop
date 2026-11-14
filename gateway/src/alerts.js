@@ -1,4 +1,5 @@
 import { upstreamBalance } from './admin.js'
+import { sendTelegramMessage } from './telegram.js'
 
 /**
  * Low-credit balance alert poller.
@@ -42,26 +43,14 @@ export function startBalanceAlerts({
       const requests = Number.isFinite(bal.requestsToday) ? ` (${bal.requestsToday} request)` : ''
       lines.splice(1, 0, `Đã dùng hôm nay: ${bal.creditsUsedToday} credit${requests}.`)
     }
-    try {
-      const res = await fetchImpl(`https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ chat_id: config.telegramChatId, text: lines.join('\n') }),
-        signal: AbortSignal.timeout(10_000),
-      })
-      let j = null
-      try { j = await res?.json() } catch { /* body not JSON */ }
-      if (res?.ok && j?.ok === true) {
-        log(`${new Date().toISOString()} INFO telegram alert sent, balance=${remaining}`)
-        return true
-      }
-      log(`${new Date().toISOString()} WARN telegram send failed: HTTP ${res?.status ?? 'unknown'}`)
-      return false
-    } catch (err) {
-      // A failed Telegram send must never take the poller down with it.
-      log(`${new Date().toISOString()} WARN telegram send failed: ${err?.message ?? err}`)
-      return false
+    // sendTelegramMessage never throws: a failed send must not take the poller down with it.
+    const r = await sendTelegramMessage({ config, fetchImpl, text: lines.join('\n') })
+    if (r.ok) {
+      log(`${new Date().toISOString()} INFO telegram alert sent, balance=${remaining}`)
+      return true
     }
+    log(`${new Date().toISOString()} WARN telegram send failed: ${r.error}`)
+    return false
   }
 
   /** One check: read the revidapi balance and alert when it is at/below the threshold. Never throws. */
