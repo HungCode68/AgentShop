@@ -12,6 +12,16 @@ const ClaudeCodeGuide = lazy(() => import('./guide/ClaudeCodeGuide'))
 // /bang-gia is the public price list to send to customers, also loaded on demand.
 const PricingPage = lazy(() => import('./pricing/PricingPage'))
 const path = window.location.pathname
+
+// Browser tab title per page (the admin page sets its own).
+const TITLES: [RegExp, string][] = [
+  [/^\/bang-gia\/?$/, 'Bảng giá · AgentShop'],
+  [/^\/huong-dan\/claude-code\/?$/, 'Cài Claude Code cho VS Code · AgentShop'],
+  [/^\/huong-dan\/?$/, 'Hướng dẫn dùng Claude · AgentShop'],
+  [/^\/?$/, 'Kiểm tra hạn mức · AgentShop'],
+]
+const title = TITLES.find(([re]) => re.test(path))?.[1]
+if (title) document.title = title
 const Page = /^\/admin\/?$/.test(path)
   ? AdminApp
   : /^\/huong-dan\/?$/.test(path)

@@ -1,4 +1,4 @@
-# Quota Monitor
+# AgentShop
 
 Hệ thống cấp API key riêng cho client để dùng AI của agentshop247 và kiểm tra hạn mức.
 

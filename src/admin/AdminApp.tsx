@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { Brand } from '../components/Logo'
 import {
   AlertIcon,
   BanIcon,
@@ -56,7 +57,7 @@ export default function AdminApp() {
   }, [])
 
   useEffect(() => {
-    document.title = 'Quản trị key · Quota Monitor'
+    document.title = 'Quản trị key · AgentShop'
     const meta = document.createElement('meta')
     meta.name = 'robots'
     meta.content = 'noindex, nofollow'
@@ -73,14 +74,8 @@ export default function AdminApp() {
     <div className="app">
       <div className="bg-glow" aria-hidden />
       <header className="topbar">
-        <div className="brand">
-          <span className="brand__mark" aria-hidden>
-            <svg viewBox="0 0 32 32" width="18" height="18">
-              <path d="M16 6a10 10 0 1 0 10 10" stroke="currentColor" strokeWidth="3.2" fill="none" strokeLinecap="round" />
-              <circle cx="16" cy="16" r="3" fill="currentColor" />
-            </svg>
-          </span>
-          <span className="brand__name">Quota Monitor</span>
+        <div className="topbar__brand">
+          <Brand href="/admin" />
           <span className="topbar__tag">Quản trị</span>
         </div>
         {api && (

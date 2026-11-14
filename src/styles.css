@@ -128,18 +128,35 @@ input {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  color: var(--text);
+  text-decoration: none;
 }
 .brand__mark {
-  display: grid;
-  place-items: center;
+  display: block;
   width: 32px;
   height: 32px;
   border-radius: 9px;
-  color: #fff;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  box-shadow: 0 6px 18px -6px var(--accent);
+  box-shadow: 0 8px 20px -8px rgba(79, 70, 229, 0.7);
+  transition: transform 0.15s;
+}
+.brand__mark svg {
+  display: block;
+}
+.brand:hover .brand__mark {
+  transform: rotate(-4deg) scale(1.04);
+}
+.brand__name {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+}
+.brand__accent {
+  color: var(--accent);
+}
+.topbar__brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 .topbar__tag {
   font-size: 12px;
