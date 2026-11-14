@@ -3,6 +3,7 @@ import { openDb } from './db.js'
 import { KeyStore } from './keys.js'
 import { QuotaStore } from './quota.js'
 import { createGateway } from './server.js'
+import { startBalanceAlerts } from './alerts.js'
 
 let config
 try {
@@ -25,8 +26,11 @@ server.listen(config.port, () => {
   console.log(`Gateway listening on :${config.port} → ${config.revidBaseUrl} (db: ${config.dbPath})`)
 })
 
+const alerts = startBalanceAlerts({ config, fetchImpl: fetch, log: (l) => console.log(l) })
+
 const shutdown = (signal) => {
   console.log(`${signal} received, shutting down…`)
+  alerts.stop()
   server.close(() => {
     db.close()
     process.exit(0)
