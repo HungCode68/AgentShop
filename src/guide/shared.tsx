@@ -4,9 +4,9 @@ import { API_BASE } from '../lib/api'
 import { copyText } from '../lib/clipboard'
 import { savedKey } from '../lib/savedKey'
 
-/** Shared pieces of the guide pages (/huong-dan for Chatbox, /huong-dan/claude-code). */
+/** Shared pieces of the guide pages (/huong-dan for Claude Desktop, /huong-dan/claude-code). */
 
-// What users paste into Chatbox's "API Host": our gateway's proxy root (Chatbox appends /messages itself).
+// What users paste as the gateway / API host: our gateway's proxy root (clients append /v1/messages or /messages).
 export const API_HOST = new URL(`${API_BASE}/proxy`, window.location.origin).href
 export const SETUP_URL = new URL(`${API_BASE}/setup`, window.location.origin).href
 export const KEY_PLACEHOLDER = 'KEY_CUA_BAN'

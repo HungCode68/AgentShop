@@ -51,7 +51,7 @@ const FAQ = [
   },
   {
     q: 'Dùng ở đâu?',
-    a: 'Claude Code trong VS Code hoặc terminal (cài bằng 1 lệnh), và app Chatbox trên máy tính, điện thoại. Xem trang Hướng dẫn.',
+    a: 'Claude Code trong VS Code hoặc terminal (cài bằng 1 lệnh), và app Claude Desktop trên máy tính (Windows, macOS). Xem trang Hướng dẫn.',
   },
   {
     q: 'Có dùng thử miễn phí không?',
@@ -77,7 +77,7 @@ export default function PricingPage() {
       <main className="container pricing">
         <section className="hero">
           <h1>Bảng giá Claude</h1>
-          <p>Mua một lần, không thời hạn. Dùng Claude Sonnet, Opus và Haiku qua Claude Code (VS Code) hoặc app Chatbox.</p>
+          <p>Mua một lần, không thời hạn. Dùng Claude Sonnet, Opus và Haiku qua app Claude Desktop hoặc Claude Code (VS Code).</p>
           <ul className="pricing-points">
             <li>
               <CheckIcon width={15} height={15} /> Không thời hạn

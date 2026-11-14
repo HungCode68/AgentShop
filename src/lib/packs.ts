@@ -106,7 +106,7 @@ export const TASKS: Task[] = [
   {
     id: 'chat',
     title: 'Hỏi đáp, chat ngắn',
-    example: 'Hỏi một câu, nhận câu trả lời vài đoạn (Chatbox).',
+    example: 'Hỏi một câu, nhận câu trả lời vài đoạn (Claude Desktop).',
     unit: 'câu hỏi',
     mix: plus(REVID_OVERHEAD, { input: 1_000, cacheWrite: 0, cacheRead: 0, output: 500 }),
   },

@@ -105,7 +105,7 @@ export default function ClaudeCodeGuide() {
       <div className="bg-glow" aria-hidden />
       <Topbar>
         <a className="btn btn--ghost" href={'/huong-dan' + window.location.search}>
-          Hướng dẫn Chatbox
+          Hướng dẫn Claude Desktop
         </a>
         <a className="btn btn--ghost" href="/">
           Kiểm tra hạn mức

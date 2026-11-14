@@ -1,6 +1,6 @@
 const STORAGE_KEY = 'quota-monitor:key'
 
-/** The API key the user chose to remember on the quota page (shared with the Chatbox guide). */
+/** The API key the user chose to remember on the quota page (shared with the guide pages). */
 export const savedKey = {
   get: () => {
     try {

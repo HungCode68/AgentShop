@@ -5,7 +5,7 @@ import './styles.css'
 
 // /admin opens the key management page. Nothing links to it; it is loaded on demand so the quota page stays small.
 const AdminApp = lazy(() => import('./admin/AdminApp'))
-// /huong-dan is the step-by-step Chatbox setup guide, also loaded on demand.
+// /huong-dan is the step-by-step Claude Desktop setup guide, also loaded on demand.
 const GuidePage = lazy(() => import('./guide/GuidePage'))
 // /huong-dan/claude-code walks through the one-command Claude Code (VS Code) setup.
 const ClaudeCodeGuide = lazy(() => import('./guide/ClaudeCodeGuide'))

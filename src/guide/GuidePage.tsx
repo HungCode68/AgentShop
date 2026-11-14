@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { Topbar } from '../components/Topbar'
 import { API_HOST, CLAUDE_CODE_GUIDE, CopyField, knownKey, mask, Step, useHashScroll } from './shared'
 
-const DOWNLOAD_URL = 'https://chatboxai.app'
+/** Official Claude Desktop download page. */
+const DOWNLOAD_URL = 'https://claude.ai/download'
 
 // Links sent before the Claude Code setup moved to its own page (/huong-dan#cai-nhanh) go there.
 if (window.location.hash === '#cai-nhanh') {
@@ -10,11 +11,15 @@ if (window.location.hash === '#cai-nhanh') {
 }
 
 const TOC = [
-  { href: '#chatbox', title: 'App Chatbox (máy tính)', desc: 'Hỏi đáp, chat. 6 bước có ảnh, khoảng 3 phút.' },
+  { href: '#desktop', title: 'Claude Desktop (máy tính)', desc: 'Hỏi đáp, chat ngay trong app Claude chính thức. 6 bước có ảnh, khoảng 3 phút.' },
   { href: CLAUDE_CODE_GUIDE, title: 'Claude Code (VS Code)', desc: 'Dùng Claude để viết code. Cài bằng 1 lệnh, có hướng dẫn từng bước.' },
   { href: '#gap-loi', title: 'Gặp lỗi?', desc: 'Các lỗi thường gặp và cách xử lý.' },
 ]
 
+/**
+ * Claude Desktop with "third-party inference": the official app sends its requests to our gateway
+ * (Developer > Configure Third-Party Inference > Gateway), using the customer's ak_ key.
+ */
 export default function GuidePage() {
   const [key] = useState(knownKey)
   useHashScroll()
@@ -43,74 +48,94 @@ export default function GuidePage() {
           ))}
         </nav>
 
-        <div className="card guide-keys" id="chatbox">
-          <h2>Hai thông tin bạn sẽ dán vào Chatbox</h2>
-          <CopyField label="API Host" value={API_HOST} />
+        <div className="card guide-keys" id="desktop">
+          <h2>Hai thông tin bạn sẽ dán vào Claude Desktop</h2>
+          <CopyField label="Gateway base URL" value={API_HOST} />
           {key ? (
-            <CopyField label="API Key" value={key} display={mask(key)} />
+            <CopyField label="Gateway API key" value={key} display={mask(key)} />
           ) : (
             <p className="small muted">
-              API Key: dùng key <span className="mono">ak_…</span> quản trị viên đã gửi cho bạn.
+              Gateway API key: dùng key <span className="mono">ak_…</span> quản trị viên đã gửi cho bạn.
             </p>
           )}
         </div>
 
-        <Step n={1} title="Tải và cài app Chatbox" img="1-download.png" alt="Trang tải Chatbox với các bản cho Windows, macOS và Linux">
+        <Step n={1} title="Tải và cài Claude Desktop">
           <p>
             Vào{' '}
             <a href={DOWNLOAD_URL} target="_blank" rel="noreferrer">
-              chatboxai.app
-            </a>
-            , bấm <b>Download</b> và chọn đúng bản cho máy tính của bạn: Windows, macOS (Apple Silicon hoặc Intel) hoặc Linux. Cài xong thì mở
-            app lên.
+              claude.ai/download
+            </a>{' '}
+            và tải bản cho máy của bạn (Windows hoặc macOS), cài xong thì mở app lên. Nếu app yêu cầu đăng nhập, dùng tài khoản Claude miễn phí
+            là đủ: các câu trả lời sẽ đi qua key của bạn, không dùng hạn mức của tài khoản đó.
           </p>
         </Step>
 
-        <Step n={2} title="Mở Settings" img="2-settings.png" alt="Màn hình chính Chatbox, nút Settings ở góc dưới bên trái">
+        <Step n={2} title="Bật Developer Mode" img="desktop-2-developer-mode.png" alt="Menu Help, Troubleshooting, Enable Developer Mode trong Claude Desktop">
           <p>
-            Bấm <b>Settings</b> ở góc dưới bên trái cửa sổ.
+            Bấm biểu tượng menu <b>☰</b> ở góc trên bên trái, chọn <b>① Help</b> → <b>② Troubleshooting</b> → <b>③ Enable Developer Mode…</b>,
+            rồi đồng ý nếu app hỏi xác nhận.
+          </p>
+          <p className="small muted">Chỉ cần làm một lần. Sau bước này menu sẽ có thêm mục Developer.</p>
+        </Step>
+
+        <Step
+          n={3}
+          title="Mở Configure Third-Party Inference"
+          img="desktop-3-third-party.png"
+          alt="Menu Developer, mục Configure Third-Party Inference trong Claude Desktop"
+        >
+          <p>
+            Bấm lại <b>① ☰</b>, chọn <b>② Developer</b> → <b>③ Configure Third-Party Inference…</b>
           </p>
         </Step>
 
-        <Step n={3} title="Vào Model Provider" img="3-model-provider.png" alt="Trang Settings, mục Model Provider trong nhóm Models">
-          <p>
-            Ở cột bên trái, trong nhóm <b>Models</b>, bấm <b>Model Provider</b>. Không cần đăng nhập tài khoản Chatbox AI.
-          </p>
-        </Step>
-
-        <Step n={4} title="Chọn Claude, điền API Key và API Host" img="4-claude-host-key.png" alt="Cấu hình Claude với ô API Key và API Host đã điền">
-          <p>
-            Chọn <b>Claude</b> trong danh sách nhà cung cấp, rồi dán hai thông tin ở đầu trang vào đúng ô:
-          </p>
-          <ul>
+        <Step n={4} title="Điền thông tin kết nối" img="desktop-4-connection.png" alt="Cửa sổ Configure third-party inference với các ô cần điền">
+          <p>Trong mục Connection, làm theo đúng số trên ảnh:</p>
+          <ol className="guide-list">
             <li>
-              <b>API Key</b>: key <span className="mono">ak_…</span> của bạn.
+              Chọn <b>Gateway</b> trong ô đầu tiên.
             </li>
             <li>
-              <b>API Host</b>: <span className="mono">{API_HOST}</span>
+              <b>Credential kind</b>: chọn <b>Static API key</b>.
             </li>
-          </ul>
+            <li>
+              <b>Gateway base URL</b>: dán <span className="mono">{API_HOST}</span>
+            </li>
+            <li>
+              <b>Gateway API key</b>: dán key <span className="mono">ak_…</span> của bạn.
+            </li>
+            <li>
+              Bấm <b>Test connection</b>: chấm chuyển <b className="guide-ok">xanh</b> là kết nối được.
+            </li>
+            <li>
+              Bấm <b>Apply Changes</b>.
+            </li>
+          </ol>
           <p className="small muted">
-            Dòng Preview bên dưới phải là <span className="mono">{API_HOST}/messages</span>. Không thêm <span className="mono">/v1</span> hay dấu{' '}
-            <span className="mono">/</span> ở cuối.
+            Các ô còn lại (Gateway auth scheme, Artifact preview…) để trống. Không thêm <span className="mono">/v1</span> hay dấu{' '}
+            <span className="mono">/</span> vào cuối địa chỉ.
           </p>
           <div className="guide-inline-copy">
-            <CopyField label="API Host" value={API_HOST} />
-            {key && <CopyField label="API Key" value={key} display={mask(key)} />}
+            <CopyField label="Gateway base URL" value={API_HOST} />
+            {key && <CopyField label="Gateway API key" value={key} display={mask(key)} />}
           </div>
         </Step>
 
-        <Step n={5} title="Bấm Check để kiểm tra kết nối" img="5-check.png" alt="Hộp thoại Model Test Results báo Connection successful">
+        <Step n={5} title="Bấm Save & Restart" img="desktop-5-restart.png" alt="Hộp thoại Save & Restart của Claude Desktop">
           <p>
-            Bấm nút <b>Check</b> bên cạnh ô API Key. Thấy <b className="guide-ok">Connection successful!</b> là đã kết nối xong, bấm{' '}
-            <b>Confirm</b> rồi đóng Settings.
+            Claude Desktop hỏi khởi động lại để dùng cấu hình mới: bấm <b>Save &amp; Restart</b>. App sẽ tự tắt và mở lại.
           </p>
         </Step>
 
-        <Step n={6} title="Quay lại khung chat và chọn model" img="6-choose-model.png" alt="Danh sách model Claude trong mục More Providers">
+        <Step n={6} title="Chọn model và bắt đầu chat">
           <p>
-            Bấm vào tên model ở góc dưới bên phải ô chat, kéo xuống mục <b>More Providers</b> → <b>Claude</b> rồi chọn model muốn dùng, ví dụ{' '}
-            <b>Claude Sonnet 5</b> (khuyên dùng) hoặc <b>Claude Opus 5</b> (mạnh nhất). Giờ bạn có thể bắt đầu chat.
+            Ở ô chat, bấm vào tên model (góc phải ô chat) và chọn <b>Sonnet 5.5</b> (khuyên dùng), <b>Haiku 5.5</b> (tiết kiệm) hoặc{' '}
+            <b>Opus 5.5</b> (mạnh nhất), rồi gõ câu hỏi và chat như bình thường.
+          </p>
+          <p className="small muted">
+            Chỉ 3 model trên dùng được với key của bạn; chọn model khác sẽ báo lỗi. Số credit đã dùng xem ở trang{' '}
+            <a href="/">Kiểm tra hạn mức</a>.
           </p>
         </Step>
 
@@ -127,11 +152,16 @@ export default function GuidePage() {
         <section className="card guide-faq" id="gap-loi">
           <h2>Gặp lỗi?</h2>
           <dl>
-            <dt>Bấm Check báo lỗi</dt>
-            <dd>Kiểm tra lại API Key (dán đủ, không thừa dấu cách) và API Host đúng như bước 4.</dd>
-            <dt>Chỉ thấy một model tên "claude"</dt>
+            <dt>Không thấy mục Developer trong menu</dt>
+            <dd>Làm lại bước 2 (Enable Developer Mode), rồi tắt hẳn Claude Desktop và mở lại.</dd>
+            <dt>Test connection không xanh</dt>
             <dd>
-              Chọn model trong mục <b>More Providers</b> → <b>Claude</b> như bước 6, đừng tự gõ tên model.
+              Kiểm tra lại Gateway base URL đúng như bước 4 (không thừa <span className="mono">/v1</span> hay dấu <span className="mono">/</span>{' '}
+              ở cuối) và key dán đủ, không thừa dấu cách. Credential kind phải là Static API key.
+            </dd>
+            <dt>Chat báo lỗi model</dt>
+            <dd>
+              Chọn lại <b>Sonnet 5.5</b>, <b>Haiku 5.5</b> hoặc <b>Opus 5.5</b> như bước 6.
             </dd>
             <dt>Báo hết credit hoặc key hết hạn</dt>
             <dd>
@@ -142,7 +172,7 @@ export default function GuidePage() {
         </section>
       </main>
 
-      <footer className="footer">Chatbox là app của bên thứ ba. Key chỉ lưu trong app trên máy bạn, đừng chia sẻ key cho người khác.</footer>
+      <footer className="footer">Key chỉ lưu trong Claude Desktop trên máy bạn, đừng chia sẻ key cho người khác.</footer>
     </div>
   )
 }

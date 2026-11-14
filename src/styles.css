@@ -913,7 +913,7 @@ a.brand {
   text-decoration: none;
 }
 
-/* ---------- Chatbox guide (/huong-dan) ---------- */
+/* ---------- Guide pages (/huong-dan, /huong-dan/claude-code) ---------- */
 .guide {
   max-width: 820px;
 }
@@ -957,7 +957,38 @@ a.brand {
   }
 }
 
-/* Link card from the Chatbox guide to the Claude Code guide */
+/* Numbered list matching the red numbered badges drawn on the screenshots */
+.guide-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: guide-list;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.guide-list li {
+  counter-increment: guide-list;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.guide-list li::before {
+  content: counter(guide-list);
+  flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #e53935;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  transform: translateY(-1px);
+}
+
+/* Link card from the Claude Desktop guide to the Claude Code guide */
 .guide a.guide-next {
   display: flex;
   align-items: center;
