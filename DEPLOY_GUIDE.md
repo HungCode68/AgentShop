@@ -40,15 +40,19 @@ openssl rand -hex 32   # dùng cho GATEWAY_ADMIN_TOKEN
 openssl rand -hex 32   # dùng cho GATEWAY_ENCRYPTION_KEY
 ```
 
-Vào **Manage Jenkins → Credentials → System → Global credentials → Add Credentials**, tạo 3 mục kiểu **Secret text**:
+Vào **Manage Jenkins → Credentials → System → Global credentials → Add Credentials**, tạo 5 mục kiểu **Secret text**:
 
 | ID | Giá trị | Ghi chú |
 | --- | --- | --- |
 | `GATEWAY_ADMIN_TOKEN` | chuỗi thứ nhất | Token gọi API quản trị |
 | `GATEWAY_ENCRYPTION_KEY` | chuỗi thứ hai | Khoá mã hoá key trong DB |
 | `GATEWAY_REVID_API_KEY` | key `sk_...` của tài khoản revidapi | Nguồn AI dùng chung cho mọi khách. **Thiếu mục này thì gateway không khởi động** |
+| `GATEWAY_TELEGRAM_BOT_TOKEN` | token bot Telegram (từ @BotFather) | **Có thể để rỗng** — khi rỗng, cảnh báo Telegram tự tắt |
+| `GATEWAY_TELEGRAM_CHAT_ID` | chat id nhận cảnh báo | **Có thể để rỗng** |
 
 Đổi key revidapi (vd khi bị lộ): tạo key mới trên revidapi.com → sửa giá trị của `GATEWAY_REVID_API_KEY` trong Jenkins → **Build Now**. Khách không phải làm gì.
+
+> ⚠️ **Cảnh báo Telegram:** `withCredentials` yêu cầu 2 credential `GATEWAY_TELEGRAM_BOT_TOKEN` và `GATEWAY_TELEGRAM_CHAT_ID` phải **tồn tại trong Jenkins trước** (kể cả nội dung rỗng), nếu không pipeline lỗi ngay stage Deploy. Trình tự: (1) tạo 2 credentials rỗng, (2) build để code lên, (3) điền token + chat id thật, (4) build lần nữa. Ngưỡng/chu kỳ chỉnh bằng `TELEGRAM_LOW_CREDITS` / `TELEGRAM_ALERT_INTERVAL_MIN` trong compose (mặc định 500 credit / 5 phút, nhắc lại mỗi 30 phút khi vẫn thấp).
 
 > ⚠️ **Lưu `GATEWAY_ENCRYPTION_KEY` ở một nơi an toàn khác và không bao giờ đổi nó.** Nếu mất hoặc đổi khoá này, toàn bộ key `as_` đã lưu sẽ không giải mã được và phải gán lại từ đầu.
 

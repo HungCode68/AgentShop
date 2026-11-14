@@ -20,6 +20,11 @@ services:
       # AI upstream: one revidapi account key for every customer (Jenkins Credentials: GATEWAY_REVID_API_KEY).
       REVID_API_KEY: ${REVID_API_KEY:?REVID_API_KEY is required (key sk_ of the revidapi account)}
       REVID_LOW_CREDITS: ${REVID_LOW_CREDITS:-300}
+      # Telegram low-credit alerts (leave token/chat empty to keep the poller disabled).
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_LOW_CREDITS: ${TELEGRAM_LOW_CREDITS:-500}
+      TELEGRAM_ALERT_INTERVAL_MIN: ${TELEGRAM_ALERT_INTERVAL_MIN:-5}
       HEDGE_AFTER_MS: ${HEDGE_AFTER_MS:-0}
       MAX_CONCURRENT_PER_KEY: ${MAX_CONCURRENT_PER_KEY:-8}
       UPSTREAM_BASE_URL: ${UPSTREAM_BASE_URL:-https://api.agentshop247.com/api}

@@ -29,6 +29,8 @@ pipeline {
                     string(credentialsId: 'GATEWAY_ADMIN_TOKEN',    variable: 'ADMIN_TOKEN'),
                     string(credentialsId: 'GATEWAY_ENCRYPTION_KEY', variable: 'ENCRYPTION_KEY'),
                     string(credentialsId: 'GATEWAY_REVID_API_KEY',  variable: 'REVID_API_KEY'),
+                    string(credentialsId: 'GATEWAY_TELEGRAM_BOT_TOKEN', variable: 'TELEGRAM_BOT_TOKEN'),
+                    string(credentialsId: 'GATEWAY_TELEGRAM_CHAT_ID',   variable: 'TELEGRAM_CHAT_ID'),
                 ]) {
                     sh '''
                         # KHÔNG dùng "down -v": volume gateway-data chứa database key.
