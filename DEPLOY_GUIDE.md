@@ -52,7 +52,7 @@ Vào **Manage Jenkins → Credentials → System → Global credentials → Add 
 
 Đổi key revidapi (vd khi bị lộ): tạo key mới trên revidapi.com → sửa giá trị của `GATEWAY_REVID_API_KEY` trong Jenkins → **Build Now**. Khách không phải làm gì.
 
-> ⚠️ **Cảnh báo Telegram:** `withCredentials` yêu cầu 2 credential `GATEWAY_TELEGRAM_BOT_TOKEN` và `GATEWAY_TELEGRAM_CHAT_ID` phải **tồn tại trong Jenkins trước** (kể cả nội dung rỗng), nếu không pipeline lỗi ngay stage Deploy. Trình tự: (1) tạo 2 credentials rỗng, (2) build để code lên, (3) điền token + chat id thật, (4) build lần nữa. Ngưỡng/chu kỳ chỉnh bằng `TELEGRAM_LOW_CREDITS` / `TELEGRAM_ALERT_INTERVAL_MIN` trong compose (mặc định 500 credit / 5 phút, nhắc lại mỗi 30 phút khi vẫn thấp).
+> ⚠️ **Cảnh báo Telegram:** `withCredentials` yêu cầu 2 credential `GATEWAY_TELEGRAM_BOT_TOKEN` và `GATEWAY_TELEGRAM_CHAT_ID` phải **tồn tại trong Jenkins trước** (kể cả nội dung rỗng), nếu không pipeline lỗi ngay stage Deploy. Trình tự: (1) tạo 2 credentials rỗng, (2) build để code lên, (3) điền token + chat id thật, (4) build lần nữa. Ngưỡng/chu kỳ chỉnh bằng `TELEGRAM_LOW_CREDITS` / `TELEGRAM_ALERT_INTERVAL_MIN` trong compose (mặc định 500 credit / 5 phút, nhắc lại mỗi 30 phút khi vẫn thấp). Nếu Jenkins không cho tạo Secret text rỗng thì chỉ cần để trống `GATEWAY_TELEGRAM_CHAT_ID` (một giá trị rỗng là đủ để cảnh báo tắt).
 
 > ⚠️ **Lưu `GATEWAY_ENCRYPTION_KEY` ở một nơi an toàn khác và không bao giờ đổi nó.** Nếu mất hoặc đổi khoá này, toàn bộ key `as_` đã lưu sẽ không giải mã được và phải gán lại từ đầu.
 

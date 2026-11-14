@@ -219,6 +219,12 @@ describe('config: telegram alerts', () => {
     }, { requireAdminToken: false })
     assert.equal(bad.telegramAlertIntervalMin, 5) // ≤ 0 → về mặc định, không throw
   })
+  test('empty or non-numeric TELEGRAM_LOW_CREDITS falls back to 500', () => {
+    for (const v of ['', '   ', 'abc']) {
+      const c = loadConfig({ PORT: '8090', ENCRYPTION_KEY: '11'.repeat(32), TELEGRAM_LOW_CREDITS: v }, { requireAdminToken: false })
+      assert.equal(c.telegramLowCredits, 500)
+    }
+  })
 })
 
 describe('balance alerts (Telegram)', () => {
@@ -320,6 +326,65 @@ describe('balance alerts (Telegram)', () => {
     const a = startBalanceAlerts({ config: { ...alertConfig() }, fetchImpl, log: () => {}, timer: fakeTimer, now: () => 0 })
     await a.tick()
     assert.equal(tg.length, 0)
+  })
+
+  test('failed telegram send (HTTP 502) does not arm the 30-min re-alert', async () => {
+    let attempts = 0
+    let tgOk = false
+    const fetchImpl = async (url) => {
+      const u = String(url)
+      if (u.includes('/v1/usage')) return { ok: true, json: async () => ({ credits_remaining: 400, credits_used: 10, requests: 3 }) }
+      attempts++
+      return tgOk ? { ok: true, json: async () => ({ ok: true }) } : { ok: false, status: 502, json: async () => ({ ok: false }) }
+    }
+    let t = 0
+    const a = startBalanceAlerts({ config: alertConfig(), fetchImpl, log: () => {}, timer: fakeTimer, now: () => t })
+    await a.tick() // queued behind the start-up tick; both fail (502) → neither arms
+    assert.equal(attempts, 2)
+    t += 5 * 60_000; await a.tick() // not armed → retries
+    assert.equal(attempts, 3)
+    tgOk = true
+    t += 5 * 60_000; await a.tick() // succeeds → arms
+    assert.equal(attempts, 4)
+    t += 5 * 60_000; await a.tick() // armed → no send
+    assert.equal(attempts, 4)
+  })
+
+  test('stale reading (usage fails after a good one) → no alert', async () => {
+    let usageDown = false
+    const tg = []
+    const fetchImpl = async (url, init = {}) => {
+      const u = String(url)
+      if (u.includes('/v1/usage')) {
+        if (usageDown) throw new Error('ECONNREFUSED')
+        return { ok: true, json: async () => ({ credits_remaining: 400, credits_used: 10, requests: 3 }) }
+      }
+      tg.push(JSON.parse(init.body).text)
+      return { ok: true, json: async () => ({ ok: true }) }
+    }
+    let t = 0
+    const a = startBalanceAlerts({ config: { ...alertConfig() }, fetchImpl, log: () => {}, timer: fakeTimer, now: () => t })
+    await a.tick()
+    assert.equal(tg.length, 1)
+    usageDown = true
+    t += 31 * 60_000
+    await a.tick() // upstreamBalance serves { ok: true, stale: true } → must not alert
+    assert.equal(tg.length, 1)
+  })
+
+  test('only one of token / chat id set → disabled', async () => {
+    for (const partial of [{ telegramChatId: '' }, { telegramBotToken: '' }]) {
+      const lines = []
+      const fetched = []
+      const fetchImpl = async (url) => { fetched.push(String(url)); return { ok: true, json: async () => ({ ok: true }) } }
+      const a = startBalanceAlerts({
+        config: { ...alertConfig(), ...partial },
+        fetchImpl, log: (l) => lines.push(l), timer: fakeTimer, now: () => 0,
+      })
+      await a.tick(); a.stop()
+      assert.equal(fetched.length, 0)
+      assert.ok(lines.some((l) => /disabled/i.test(l)))
+    }
   })
 })
 

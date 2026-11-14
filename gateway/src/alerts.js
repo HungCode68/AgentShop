@@ -26,10 +26,12 @@ export function startBalanceAlerts({
     log(`${new Date().toISOString()} WARN telegram alerts disabled (thiếu bot token hoặc chat id)`)
     return { stop() {}, tick() {} }
   }
+  log(`${new Date().toISOString()} INFO telegram alerts enabled: threshold=${config.telegramLowCredits}, every ${config.telegramAlertIntervalMin} min`)
 
   let lastAlertAt = null
 
-  /** Vietnamese plain-text message; the "used today" line is only included when the numbers are finite. */
+  /** Vietnamese plain-text message; the "used today" line is only included when the numbers are finite.
+   *  Resolves true only when Telegram answered HTTP ok with { ok: true }; false otherwise (never throws). */
   async function sendTelegram(remaining, bal) {
     const threshold = config.telegramLowCredits
     const lines = [
@@ -45,28 +47,36 @@ export function startBalanceAlerts({
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ chat_id: config.telegramChatId, text: lines.join('\n') }),
+        signal: AbortSignal.timeout(10_000),
       })
-      if (res?.ok) log(`${new Date().toISOString()} INFO telegram alert sent, balance=${remaining}`)
-      else log(`${new Date().toISOString()} WARN telegram send failed: HTTP ${res?.status ?? 'unknown'}`)
+      let j = null
+      try { j = await res?.json() } catch { /* body not JSON */ }
+      if (res?.ok && j?.ok === true) {
+        log(`${new Date().toISOString()} INFO telegram alert sent, balance=${remaining}`)
+        return true
+      }
+      log(`${new Date().toISOString()} WARN telegram send failed: HTTP ${res?.status ?? 'unknown'}`)
+      return false
     } catch (err) {
       // A failed Telegram send must never take the poller down with it.
       log(`${new Date().toISOString()} WARN telegram send failed: ${err?.message ?? err}`)
+      return false
     }
   }
 
   /** One check: read the revidapi balance and alert when it is at/below the threshold. Never throws. */
   async function runOnce() {
     const bal = await upstreamBalance({ config, fetchImpl, log })
-    if (!bal.ok) {
-      log(`${new Date().toISOString()} WARN revid balance check failed: ${bal.error} — no alert sent`)
+    if (!bal.ok || bal.stale) {
+      log(`${new Date().toISOString()} WARN revid balance check failed or stale: ${bal.error} — no alert sent`)
       return
     }
     const remaining = bal.creditsRemaining
     const threshold = config.telegramLowCredits
     if (remaining <= threshold) {
       if (lastAlertAt === null || now() - lastAlertAt >= REARM_MS) {
-        await sendTelegram(remaining, bal)
-        lastAlertAt = now()
+        // Only a delivered alert arms the 30-min re-alert; a failed send is retried next tick.
+        if (await sendTelegram(remaining, bal)) lastAlertAt = now()
       }
     } else if (lastAlertAt !== null) {
       log(`${new Date().toISOString()} INFO balance back above threshold (${remaining} > ${threshold}), reset alert`)
