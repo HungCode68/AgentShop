@@ -23,6 +23,9 @@ export async function sendTelegramMessage({ config, fetchImpl = fetch, text }) {
     const detail = typeof j?.description === 'string' ? `: ${j.description}` : ''
     return { ok: false, error: `HTTP ${res?.status ?? 'unknown'}${detail}` }
   } catch (err) {
-    return { ok: false, error: err?.message ?? String(err) }
+    // Node's bare "fetch failed" hides the reason in err.cause (ENOTFOUND, ETIMEDOUT, ECONNREFUSED, …).
+    const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError'
+    const reason = timedOut ? 'không phản hồi trong 10s' : (err?.cause?.code ?? err?.cause?.message ?? err?.message ?? String(err))
+    return { ok: false, error: err?.cause || timedOut ? `Không kết nối được tới api.telegram.org (${reason})` : reason }
   }
 }

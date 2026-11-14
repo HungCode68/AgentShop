@@ -936,6 +936,15 @@ describe('admin API', () => {
       })
     })
 
+    test('"fetch failed" shows the real cause (err.cause.code)', async () => {
+      const fetchImpl = async () => { throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } }) }
+      await withGateway({ extraConfig: tgConfig, fetchImpl }, async (gw) => {
+        const j = await (await adminAt(gw, '/telegram-test', { method: 'POST' })).json()
+        assert.equal(j.ok, false)
+        assert.match(j.error, /api\.telegram\.org.*ENOTFOUND/)
+      })
+    })
+
     test('network failure → ok:false, no throw', async () => {
       const fetchImpl = async () => { throw new Error('ECONNREFUSED') }
       await withGateway({ extraConfig: tgConfig, fetchImpl }, async (gw) => {
