@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { after, before, beforeEach, describe, test } from 'node:test'
 import { decrypt, encrypt, parseEncryptionKey, sha256 } from '../src/crypto.js'
 import { openDb } from '../src/db.js'
+import { loadConfig } from '../src/config.js'
 import { KeyStore } from '../src/keys.js'
 import { convertedTokens, creditsForUsage, DAY_MS, HOUR_MS, MODEL_RATES, MINUTE_MS, PLANS, planCap } from '../src/plans.js'
 import { QuotaStore } from '../src/quota.js'
@@ -182,6 +183,42 @@ async function withGateway({ extraConfig = {}, now, fetchImpl } = {}, fn) {
     gw.close()
   }
 }
+
+describe('config: telegram alerts', () => {
+  // loadConfig đọc ENCRYPTION_KEY như string raw (hex 64 ký tự), không phải Buffer đã parse.
+  test('defaults: threshold 500, 5-min poll, no bot token or chat id', () => {
+    const c = loadConfig({
+      PORT: '8090',
+      ENCRYPTION_KEY: '11'.repeat(32),
+      REVID_API_KEY: REVID_KEY,
+    }, { requireAdminToken: false })
+    assert.equal(c.telegramLowCredits, 500)
+    assert.equal(c.telegramAlertIntervalMin, 5)
+    assert.equal(c.telegramBotToken, '')
+    assert.equal(c.telegramChatId, '')
+  })
+  test('reads telegram values from env and validates the poll interval', () => {
+    const c = loadConfig({
+      PORT: '8090',
+      ENCRYPTION_KEY: '11'.repeat(32),
+      TELEGRAM_BOT_TOKEN: ' TG_TOK ',
+      TELEGRAM_CHAT_ID: ' 12345 ',
+      TELEGRAM_LOW_CREDITS: '700',
+      TELEGRAM_ALERT_INTERVAL_MIN: '10',
+    }, { requireAdminToken: false })
+    assert.equal(c.telegramBotToken, 'TG_TOK')   // được trim
+    assert.equal(c.telegramChatId, '12345')
+    assert.equal(c.telegramLowCredits, 700)
+    assert.equal(c.telegramAlertIntervalMin, 10)
+
+    const bad = loadConfig({
+      PORT: '8090',
+      ENCRYPTION_KEY: '11'.repeat(32),
+      TELEGRAM_ALERT_INTERVAL_MIN: '0',
+    }, { requireAdminToken: false })
+    assert.equal(bad.telegramAlertIntervalMin, 5) // ≤ 0 → về mặc định, không throw
+  })
+})
 
 describe('crypto', () => {
   test('encrypt/decrypt round-trips and detects tampering', () => {

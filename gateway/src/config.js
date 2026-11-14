@@ -49,6 +49,11 @@ export function loadConfig(env = process.env, { requireAdminToken = true } = {})
     // No first byte from revidapi after this long: send the same request again and use whichever answers first.
     hedgeAfterMs,
     maxConcurrentPerKey,
+    // Background poller pings the owner on Telegram when the shared revidapi balance drops below the threshold.
+    telegramBotToken: (env.TELEGRAM_BOT_TOKEN ?? '').trim(),
+    telegramChatId: (env.TELEGRAM_CHAT_ID ?? '').trim(),
+    telegramLowCredits: Number.isFinite(Number(env.TELEGRAM_LOW_CREDITS)) ? Number(env.TELEGRAM_LOW_CREDITS) : 500,
+    telegramAlertIntervalMin: (() => { const v = Number(env.TELEGRAM_ALERT_INTERVAL_MIN); return v > 0 ? v : 5 })(),
     // /admin warns when the revidapi balance drops below this many credits.
     revidLowCredits: Number(env.REVID_LOW_CREDITS ?? 300),
     // Legacy agentshop upstream, only read by the CLI/admin for old keys' expiry; no AI traffic goes there.
