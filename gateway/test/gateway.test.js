@@ -14,6 +14,7 @@ import { KeyStore } from '../src/keys.js'
 import { convertedTokens, creditsForUsage, DAY_MS, HOUR_MS, MODEL_RATES, MINUTE_MS, PLANS, planCap } from '../src/plans.js'
 import { QuotaStore } from '../src/quota.js'
 import { createGateway } from '../src/server.js'
+import { startBalanceAlerts } from '../src/alerts.js'
 import { buildBashScript } from '../src/setup.js'
 import { estimateInputTokens } from '../src/tokens.js'
 
@@ -217,6 +218,108 @@ describe('config: telegram alerts', () => {
       TELEGRAM_ALERT_INTERVAL_MIN: '0',
     }, { requireAdminToken: false })
     assert.equal(bad.telegramAlertIntervalMin, 5) // ≤ 0 → về mặc định, không throw
+  })
+})
+
+describe('balance alerts (Telegram)', () => {
+  /** Fake fetch: steers the revidapi /v1/usage answer and records the Telegram sends. */
+  function makeAlertFetch({ remaining, usedToday = 10, requestsToday = 3 }) {
+    const tg = []
+    const fetchImpl = async (url, init = {}) => {
+      const u = String(url)
+      if (u.includes('/v1/usage')) {
+        return { ok: true, json: async () => ({ credits_remaining: remaining, credits_used: usedToday, requests: requestsToday }) }
+      }
+      if (u.includes('api.telegram.org')) {
+        const body = JSON.parse(init.body)
+        tg.push({ url: u, chatId: body.chat_id, text: body.text })
+        return { ok: true, json: async () => ({ ok: true }) }
+      }
+      throw new Error('unexpected fetch: ' + u)
+    }
+    return { fetchImpl, tg }
+  }
+  // Built lazily: `config` is only populated in `before()`, so a module-level object literal
+  // would capture the undefined revidBaseUrl/revidApiKey that upstreamBalance needs.
+  const alertConfig = () => ({ ...config, telegramBotToken: 'TG_TOK', telegramChatId: '12345', telegramLowCredits: 500, telegramAlertIntervalMin: 5 })
+  // Fake timer: nothing actually fires; the tests drive a.tick() themselves.
+  const fakeTimer = { _cb: null, setInterval(cb) { this._cb = cb; return 1 }, clearInterval() {} }
+
+  async function runTick(fetchImpl, now0) {
+    let t = now0
+    const now = () => t
+    const a = startBalanceAlerts({ config: alertConfig(), fetchImpl, log: () => {}, timer: fakeTimer, now })
+    await a.tick()
+    return { a, advance: (ms) => { t += ms } }
+  }
+
+  test('above threshold → no telegram', async () => {
+    const { fetchImpl, tg } = makeAlertFetch({ remaining: 1000 })
+    await runTick(fetchImpl, 0)
+    assert.equal(tg.length, 0)
+  })
+
+  test('first drop to/below threshold → one telegram, text has balance and threshold', async () => {
+    const { fetchImpl, tg } = makeAlertFetch({ remaining: 480 })
+    await runTick(fetchImpl, 0)
+    assert.equal(tg.length, 1)
+    assert.match(tg[0].text, /480/)
+    assert.match(tg[0].text, /500/)
+  })
+
+  test('still low but under 30 min → no repeat; at 30 min → repeat', async () => {
+    const { fetchImpl, tg } = makeAlertFetch({ remaining: 400 })
+    const { a, advance } = await runTick(fetchImpl, 0) // t=0: at threshold, sends alert 1
+    assert.equal(tg.length, 1)
+    await a.tick() // t=0: 0 min since alert 1 → no send
+    advance(5 * 60_000); await a.tick() // t=5m: not 30 min yet → no send
+    assert.equal(tg.length, 1)
+    advance(30 * 60_000); await a.tick() // t=35m: 30 min since alert 1 → sends alert 2
+    assert.equal(tg.length, 2)
+  })
+
+  test('recover above threshold then drop again → alerts immediately', async () => {
+    let remaining = 400
+    const tg = []
+    const fetchImpl = async (url, init = {}) => {
+      const u = String(url)
+      if (u.includes('/v1/usage')) return { ok: true, json: async () => ({ credits_remaining: remaining, credits_used: 10, requests: 3 }) }
+      tg.push({ url: u, text: JSON.parse(init.body).text })
+      return { ok: true, json: async () => ({ ok: true }) }
+    }
+    let t = 0; const now = () => t
+    const a = startBalanceAlerts({ config: alertConfig(), fetchImpl, log: () => {}, timer: fakeTimer, now })
+    await a.tick(); assert.equal(tg.length, 1) // first hit of threshold
+    remaining = 800; await a.tick() // refilled, resets
+    remaining = 450; t += 1 * 60_000; await a.tick() // drops again after 1 min (under 30 min of the old alert, but the reset cleared it → sends immediately)
+    assert.equal(tg.length, 2)
+  })
+
+  test('unconfigured (no token) → disabled, tick no-ops', async () => {
+    const lines = []
+    const tg = []
+    const fetchImpl = async (url) => { tg.push(String(url)); return { ok: true, json: async () => ({ ok: true }) } }
+    const a = startBalanceAlerts({
+      config: { ...alertConfig(), telegramBotToken: '', telegramChatId: '' },
+      fetchImpl, log: (l) => lines.push(l), timer: fakeTimer, now: () => 0,
+    })
+    await a.tick(); a.stop()
+    assert.equal(tg.length, 0) // nothing fetched (neither balance nor telegram)
+    assert.ok(lines.some((l) => /disabled/i.test(l)))
+  })
+
+  test('revid unreachable → no crash, no telegram', async () => {
+    const tg = []
+    const fetchImpl = async (url, init = {}) => {
+      if (String(url).includes('api.telegram.org')) { tg.push(1); return { ok: true, json: async () => ({ ok: true }) } }
+      throw new Error('ECONNREFUSED')
+    }
+    // Fresh config object on purpose: upstreamBalance caches a stale balance in a
+    // WeakMap keyed on the config, so a fresh one has no prior entry and a failed
+    // fetch returns { ok: false } (not a resurrected balance) → no send.
+    const a = startBalanceAlerts({ config: { ...alertConfig() }, fetchImpl, log: () => {}, timer: fakeTimer, now: () => 0 })
+    await a.tick()
+    assert.equal(tg.length, 0)
   })
 })
 
