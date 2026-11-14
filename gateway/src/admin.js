@@ -101,7 +101,12 @@ async function fetchBalanceOnce({ config, fetchImpl }) {
   }
 }
 
-async function upstreamBalance({ config, fetchImpl, log }) {
+/**
+ * Serves revidapi's account balance to every caller — the /admin page (GET /api/admin/upstream)
+ * and the low-credit alert poller. Never throws: an unreachable revidapi is reported as
+ * {ok: false} so callers can keep going.
+ */
+export async function upstreamBalance({ config, fetchImpl, log }) {
   if (!config.revidApiKey) return { ok: false, error: 'REVID_API_KEY is not set.' }
   // revidapi's usage endpoint occasionally stalls or errors for a moment: retry once, then fall
   // back to the last good reading (flagged stale) instead of blanking the admin card.
