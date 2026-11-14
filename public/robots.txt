@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+
+# Không index trang quản trị nội bộ
+Disallow: /admin
+
+# Khai báo sitemap
+Sitemap: https://agentshop.id.vn/sitemap.xml

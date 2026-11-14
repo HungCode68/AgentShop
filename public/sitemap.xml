@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <!-- Trang chủ: Kiểm tra hạn mức -->
+  <url>
+    <loc>https://agentshop.id.vn/</loc>
+    <lastmod>2026-11-14</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+
+  <!-- Bảng giá dịch vụ -->
+  <url>
+    <loc>https://agentshop.id.vn/bang-gia</loc>
+    <lastmod>2026-11-14</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Hướng dẫn sử dụng Claude Desktop -->
+  <url>
+    <loc>https://agentshop.id.vn/huong-dan</loc>
+    <lastmod>2026-11-14</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Hướng dẫn cài đặt Claude Code cho VS Code -->
+  <url>
+    <loc>https://agentshop.id.vn/huong-dan/claude-code</loc>
+    <lastmod>2026-11-14</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+</urlset>
