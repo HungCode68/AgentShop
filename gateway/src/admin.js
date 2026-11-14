@@ -103,8 +103,10 @@ async function fetchBalanceOnce({ config, fetchImpl }) {
 
 /**
  * Serves revidapi's account balance to every caller — the /admin page (GET /api/admin/upstream)
- * and the low-credit alert poller. Never throws: an unreachable revidapi is reported as
- * {ok: false} so callers can keep going.
+ * and the low-credit alert poller. Never throws. On a fetch failure it returns
+ * {ok: false, error} when there is no prior good reading, or a stale prior reading
+ * {ok: true, stale: true, error} when one exists — so a caller checking whether the read
+ * actually succeeded should look at stale/error, not just ok.
  */
 export async function upstreamBalance({ config, fetchImpl, log }) {
   if (!config.revidApiKey) return { ok: false, error: 'REVID_API_KEY is not set.' }
