@@ -153,6 +153,9 @@ const fmtCredits = (n) => (n >= 1e6 ? `${(n / 1e6).toLocaleString('vi-VN', { max
 /** Requests currently running per key id (to cap concurrency). */
 const inFlight = new Map()
 
+/** Requests currently running on NVIDIA free provider (to cap concurrency and route to Revid). */
+let nvidiaInFlight = 0
+
 /* ------------------------------------------------------------------ upstream */
 
 /**
@@ -292,6 +295,8 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
   // does not (the request failed before producing an answer).
   let reservation = 0
   let settled = false
+  let chargedProvider = 'revid' // 'revid' (standard rate) | 'nvidia' (discounted rate)
+
   const releaseReservation = () => {
     if (settled) return
     settled = true
@@ -300,14 +305,20 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
   const charge = (usage) => {
     if (settled) return
     settled = true
+    const discount = chargedProvider === 'nvidia' ? (config.nvidiaCreditDiscount ?? 0.3) : 1
+    const rawCredits = creditsForUsage(usage, request.model)
+    const rawTokens = convertedTokens(usage)
+    const finalCredits = rawCredits * discount
+    const finalTokens = rawTokens * discount
+
     const { absorbed } = quota.charge(record, {
-      credits: creditsForUsage(usage, request.model),
-      tokens: convertedTokens(usage),
+      credits: finalCredits,
+      tokens: finalTokens,
       model: request.model,
       reserved: reservation,
     })
     if (absorbed > 0) {
-      warn(log, `${req.method} ${url.pathname} key=#${record.id} answer cost ${absorbed.toFixed(3)} credit more than the pack had left; customer charged up to the pack only`)
+      warn(log, `${req.method} ${url.pathname} key=#${record.id} [${chargedProvider}] answer cost ${absorbed.toFixed(3)} credit more than the pack had left; customer charged up to the pack only`)
     }
   }
 
@@ -373,20 +384,66 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
   })
 
   let upstream
-  try {
-    upstream = await openUpstream({
-      target,
-      init: { method: 'POST', headers, body: forwardBody },
-      hedgeAfterMs: route === 'messages' ? config.hedgeAfterMs : 0,
-      fetchImpl,
-      clientSignal: clientAbort.signal,
-      onWarn: (msg) => warn(log, `${label} ${msg}`),
-    })
-  } catch (err) {
-    release()
-    releaseReservation()
-    if (clientAbort.signal.aborted) return
-    return anthropicError(res, 502, 'api_error', UPSTREAM_DOWN)
+  let isNvidia = false
+  const maxNvidia = config.maxNvidiaConcurrent ?? 5
+
+  // Hybrid routing: Ưu tiên NVIDIA Free nếu số request song song < maxNvidia và NVIDIA URL khả dụng
+  if (route === 'messages' && config.nvidiaBaseUrl && nvidiaInFlight < maxNvidia) {
+    nvidiaInFlight++
+    isNvidia = true
+    const releaseNvidia = () => {
+      if (isNvidia) {
+        isNvidia = false
+        nvidiaInFlight = Math.max(0, nvidiaInFlight - 1)
+      }
+    }
+
+    const nvidiaTarget = config.nvidiaBaseUrl + upstreamPath + url.search
+    const nvidiaHeaders = { ...headers }
+    delete nvidiaHeaders['x-api-key']
+    nvidiaHeaders['authorization'] = 'Bearer sk-ant-free-dummy'
+
+    try {
+      upstream = await openUpstream({
+        target: nvidiaTarget,
+        init: { method: 'POST', headers: nvidiaHeaders, body: forwardBody },
+        hedgeAfterMs: 0,
+        fetchImpl,
+        clientSignal: clientAbort.signal,
+        onWarn: (msg) => warn(log, `${label} [nvidia] ${msg}`),
+      })
+
+      if (!upstream.res.ok) {
+        throw new Error(`NVIDIA HTTP ${upstream.res.status}`)
+      }
+
+      chargedProvider = 'nvidia'
+      res.once('close', releaseNvidia)
+    } catch (err) {
+      releaseNvidia()
+      warn(log, `${label} NVIDIA failover to revid (${describeError(err)})`)
+      upstream = null
+    }
+  }
+
+  // Fallback hoặc gọi thẳng Revid (nếu NVIDIA đầy hoặc gặp lỗi)
+  if (!upstream) {
+    chargedProvider = 'revid'
+    try {
+      upstream = await openUpstream({
+        target,
+        init: { method: 'POST', headers, body: forwardBody },
+        hedgeAfterMs: route === 'messages' ? config.hedgeAfterMs : 0,
+        fetchImpl,
+        clientSignal: clientAbort.signal,
+        onWarn: (msg) => warn(log, `${label} [revid] ${msg}`),
+      })
+    } catch (err) {
+      release()
+      releaseReservation()
+      if (clientAbort.signal.aborted) return
+      return anthropicError(res, 502, 'api_error', UPSTREAM_DOWN)
+    }
   }
 
   const outHeaders = {}
