@@ -34,8 +34,20 @@ export interface Pack extends PublicPack {
 
 export const PACKS: Pack[] = PUBLIC_PACKS.map((p) => ({ ...p, costVnd: COST_VND[p.id] }))
 
-/** The free trial: 100k tokens, for a duration in minutes set per key by the admin. */
-export const TRIAL = { id: 'trial' as const, name: FREE_TRIAL.name, credits: 0, tokenCap: FREE_TRIAL.tokenCap, priceVnd: 0, defaultMinutes: FREE_TRIAL.defaultMinutes }
+/** The free trial: token cap from admin config (default 100k), for a duration in minutes set per key. */
+export interface TrialProps {
+  /** Trial token cap from server config (overrides the compile-time default). */
+  trialTokenCap?: number
+}
+
+export const TRIAL = (props: TrialProps = {}) => ({
+  id: 'trial' as const,
+  name: FREE_TRIAL.name,
+  credits: 0,
+  tokenCap: props.trialTokenCap ?? FREE_TRIAL.tokenCap,
+  priceVnd: 0,
+  defaultMinutes: FREE_TRIAL.defaultMinutes,
+})
 
 /** What we earn on a pack if the customer uses it all: always the pack's margin. */
 export const packMargin = (p: Pack) => p.priceVnd - p.costVnd

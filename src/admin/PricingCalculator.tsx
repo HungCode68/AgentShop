@@ -10,7 +10,8 @@ const PROFILE_IDS = Object.keys(PROFILES) as UsageProfile[]
  * reference: what each package costs, how much it is sold for, the margin if the customer uses it
  * all, and roughly how many tokens it buys (estimated the same way revid estimates its own packs).
  */
-export function PricingCalculator() {
+export function PricingCalculator({ trialTokenCap }: { trialTokenCap?: number }) {
+  const trial = TRIAL({ trialTokenCap })
   return (
     <section className="admin pc">
       <div className="admin__head">
@@ -55,7 +56,7 @@ export function PricingCalculator() {
               <td data-label="Giá vốn">tối đa ~3.600đ</td>
               <td data-label="Giá bán">miễn phí</td>
               <td data-label="Giới hạn">
-                {TRIAL.tokenCap.toLocaleString('vi-VN')} token quy đổi, mặc định {TRIAL.defaultMinutes} phút
+                {trial.tokenCap.toLocaleString('vi-VN')} token quy đổi, mặc định {trial.defaultMinutes} phút
               </td>
             </tr>
           </tbody>
@@ -98,7 +99,7 @@ export function PricingCalculator() {
         <h2 className="pc-h2">Ghi chú</h2>
         <ul className="pc-notes">
           <li>Gói trả phí không có thời hạn — khách dùng bất kỳ lúc nào cho tới khi hết số credit. Gateway không bao giờ cho dùng quá số credit của gói.</li>
-          <li>Gói dùng thử: tối đa 100.000 token quy đổi trong thời gian (theo phút) mà admin đặt, mặc định 60 phút.</li>
+          <li>Gói dùng thử: tối đa {trial.tokenCap.toLocaleString('vi-VN')} token quy đổi trong thời gian (theo phút) mà admin đặt, mặc định {trial.defaultMinutes} phút.</li>
           <li>
             Token ước tính tính theo cùng cách revid công bố cho gói của họ: <b>Code</b> = ngữ cảnh gửi lại mỗi lượt, phần lặp đọc từ
             cache (tỉ lệ 8 đọc cache : 1 ghi mới : 1 trả lời); <b>Chat thường</b> = mỗi câu hỏi gửi riêng, không cache (~1.000 token

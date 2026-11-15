@@ -32,6 +32,7 @@ const isUnauthorized = (err: unknown) => err instanceof AdminError && err.status
 export default function AdminApp() {
   const [token, setToken] = useState<string | null>(null)
   const [keys, setKeys] = useState<KeyRecord[]>([])
+  const [trialTokenCap, setTrialTokenCap] = useState<number>(100_000)
   const [checking, setChecking] = useState(() => !!tokenStorage.get())
   const [loginError, setLoginError] = useState<string | null>(null)
   const [view, setView] = useState<'keys' | 'pricing'>('keys')
@@ -39,10 +40,19 @@ export default function AdminApp() {
   const login = useCallback(async (value: string, remember: boolean) => {
     setLoginError(null)
     try {
-      const list = await createAdminApi(value).list()
+      const api = createAdminApi(value)
+      const list = await api.list()
+      let cfgTrialTokenCap: number | undefined
+      try {
+        const cfg = await api.adminConfig()
+        cfgTrialTokenCap = cfg?.trialTokenCap
+      } catch {
+        // Older gateway without /api/admin/config: fall back to compile-time default.
+      }
       tokenStorage.set(value, remember)
       setKeys(list)
       setToken(value)
+      setTrialTokenCap(cfgTrialTokenCap ?? 100_000)
     } catch (err) {
       if (isUnauthorized(err)) tokenStorage.clear()
       setLoginError((err as Error).message)
@@ -99,9 +109,9 @@ export default function AdminApp() {
             </div>
             {/* KeysView stays mounted so switching tabs keeps its list, filters and search. */}
             <div hidden={view !== 'keys'}>
-              <KeysView api={api} initialKeys={keys} onUnauthorized={() => logout('Phiên đăng nhập không còn hợp lệ, vui lòng nhập lại admin token.')} />
+              <KeysView api={api} initialKeys={keys} trialTokenCap={trialTokenCap} onUnauthorized={() => logout('Phiên đăng nhập không còn hợp lệ, vui lòng nhập lại admin token.')} />
             </div>
-            {view === 'pricing' && <PricingCalculator />}
+            {view === 'pricing' && <PricingCalculator trialTokenCap={trialTokenCap} />}
           </>
         ) : checking ? (
           <div className="login-wait">
@@ -194,10 +204,11 @@ type Dialog =
 interface KeysViewProps {
   api: AdminApi
   initialKeys: KeyRecord[]
+  trialTokenCap: number
   onUnauthorized: () => void
 }
 
-function KeysView({ api, initialKeys, onUnauthorized }: KeysViewProps) {
+function KeysView({ api, initialKeys, trialTokenCap, onUnauthorized }: KeysViewProps) {
   const [keys, setKeys] = useState(initialKeys)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -543,8 +554,8 @@ function KeysView({ api, initialKeys, onUnauthorized }: KeysViewProps) {
         )}
       </div>
 
-      {dialog?.type === 'create' && <KeyFormDialog onSubmit={create} onClose={() => setDialog(null)} />}
-      {dialog?.type === 'edit' && <KeyFormDialog record={dialog.record} onSubmit={edit(dialog.record.id)} onClose={() => setDialog(null)} />}
+      {dialog?.type === 'create' && <KeyFormDialog trialTokenCap={trialTokenCap} onSubmit={create} onClose={() => setDialog(null)} />}
+      {dialog?.type === 'edit' && <KeyFormDialog record={dialog.record} trialTokenCap={trialTokenCap} onSubmit={edit(dialog.record.id)} onClose={() => setDialog(null)} />}
       {dialog?.type === 'issued' && <NewKeyDialog issued={dialog.issued} rotated={dialog.rotated} onClose={() => setDialog(null)} />}
       {dialog?.type === 'confirm' && (
         <ConfirmDialog

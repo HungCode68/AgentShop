@@ -64,6 +64,10 @@ export const normalizeModel = (m) =>
  * charge them (confirmed 2026-11-13: Mini 40k, Starter 130k, Pro 300k, Business 700k, Enterprise 1.400k).
  * A paid pack has no time limit: "use it whenever, until the credits run out".
  */
+/** Trial token cap, overridable via TRIAL_TOKEN_CAP env (default 100_000). */
+const trialTokenCapEnv = Number(process.env.TRIAL_TOKEN_CAP)
+export const trialTokenCap = Number.isFinite(trialTokenCapEnv) && trialTokenCapEnv > 0 ? Math.floor(trialTokenCapEnv) : 100_000
+
 export const PLANS = {
   trial: {
     id: 'trial',
@@ -71,7 +75,7 @@ export const PLANS = {
     free: true,
     credits: 0,
     // The trial's cap is in converted tokens, not credits (see the file header).
-    tokenCap: 100_000,
+    tokenCap: trialTokenCap,
     price: 0,
     // Default trial length in minutes; the admin can set another one per key.
     defaultMinutes: 60,

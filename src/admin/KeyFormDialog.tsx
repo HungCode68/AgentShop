@@ -7,6 +7,8 @@ import { formatShort } from './util'
 interface Props {
   /** Absent = create a new key. */
   record?: KeyRecord
+  /** Trial token cap from server config (overrides the compile-time default). */
+  trialTokenCap?: number
   onSubmit: (input: KeyInput) => Promise<void>
   onClose: () => void
 }
@@ -16,10 +18,10 @@ const vnd = new Intl.NumberFormat('vi-VN')
 /** All the packs, cheapest first; the trial goes last. */
 const PLAN_CHOICES: { id: PlanId; name: string; credits: number; priceVnd: number }[] = [
   ...PACKS,
-  { id: 'trial', name: TRIAL.name, credits: 0, priceVnd: 0 },
+  { id: 'trial', name: TRIAL().name, credits: 0, priceVnd: 0 },
 ]
 
-export function KeyFormDialog({ record, onSubmit, onClose }: Props) {
+export function KeyFormDialog({ record, trialTokenCap, onSubmit, onClose }: Props) {
   const editing = !!record
   const [name, setName] = useState(record?.name ?? '')
   const [note, setNote] = useState(record?.note ?? '')
@@ -125,7 +127,7 @@ export function KeyFormDialog({ record, onSubmit, onClose }: Props) {
               )}
               {isTrial && (
                 <span className="field__hint">
-                  Miễn phí cho khách trải nghiệm: tối đa <b>{TRIAL.tokenCap.toLocaleString('vi-VN')} token</b> trong thời gian thử.
+                  Miễn phí cho khách trải nghiệm: tối đa <b>{(trialTokenCap ?? TRIAL.tokenCap).toLocaleString('vi-VN')} token</b> trong thời gian thử.
                 </span>
               )}
             </div>

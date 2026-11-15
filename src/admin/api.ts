@@ -144,6 +144,8 @@ export function createAdminApi(token: string) {
     upstream: () => request<UpstreamBalance>('/upstream'),
     /** Sends a test message to the Telegram alert chat. */
     telegramTest: () => request<{ ok: true } | { ok: false; error: string }>('/telegram-test', { method: 'POST' }),
+    /** Admin-visible runtime config (e.g. trial token cap). */
+    adminConfig: () => request<{ trialTokenCap: number }>('/config', { method: 'GET' }),
     revealKey: (id: number) => request<{ key: string }>(`/keys/${id}/key`).then((r) => r.key),
     usage: (id: number) => request<{ usage: UsageData }>(`/keys/${id}/usage`).then((r) => r.usage),
   }

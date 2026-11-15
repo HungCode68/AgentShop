@@ -2,6 +2,7 @@ import { safeEqual } from './crypto.js'
 import { readJson, sendJson } from './http.js'
 import { usageData } from './proxy.js'
 import { sendTelegramMessage } from './telegram.js'
+import { trialTokenCap } from './plans.js'
 
 /**
  * Admin API (Authorization: Bearer <ADMIN_TOKEN>), used by the /admin page and by curl.
@@ -41,6 +42,10 @@ export async function handleAdmin(req, res, url, { store, quota, config, fetchIm
     })
     log?.(`${new Date().toISOString()} ${r.ok ? 'INFO telegram test message sent' : `WARN telegram test message failed: ${r.error}`}`)
     return sendJson(res, 200, r)
+  }
+  if (parts[0] === 'config' && parts.length === 1) {
+    if (req.method !== 'GET') return sendJson(res, 405, { error: 'Method not allowed' })
+    return sendJson(res, 200, { trialTokenCap })
   }
   if (parts[0] !== 'keys' || parts.length > 3) return sendJson(res, 404, { error: 'Not found' })
 
