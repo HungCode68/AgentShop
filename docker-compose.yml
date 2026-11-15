@@ -20,9 +20,11 @@ services:
       # AI upstream: one revidapi account key for every customer (Jenkins Credentials: GATEWAY_REVID_API_KEY).
       REVID_API_KEY: ${REVID_API_KEY:?REVID_API_KEY is required (key sk_ of the revidapi account)}
       REVID_LOW_CREDITS: ${REVID_LOW_CREDITS:-300}
-      # NVIDIA NIM Free hybrid routing
-      NVIDIA_BASE_URL: ${NVIDIA_BASE_URL:-http://host.docker.internal:8082}
-      MAX_NVIDIA_CONCURRENT: ${MAX_NVIDIA_CONCURRENT:-5}
+      # NVIDIA NIM Direct API Integration (Không phụ thuộc vào free-claude-code)
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-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}
+      NVIDIA_BASE_URL: ${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      NVIDIA_MODEL: ${NVIDIA_MODEL:-nvidia/nemotron-3.5-super-vl-120b-a12b}
+      MAX_NVIDIA_CONCURRENT: ${MAX_NVIDIA_CONCURRENT:-50}
       NVIDIA_CREDIT_DISCOUNT: ${NVIDIA_CREDIT_DISCOUNT:-0.3}
       # Telegram low-credit alerts (leave token/chat empty to keep the poller disabled).
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}

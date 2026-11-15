@@ -3,6 +3,7 @@ import { ALLOWED_MODELS, convertedTokens, creditsForUsage, MODEL_RATES, normaliz
 import { estimateRequestCredits } from './quota.js'
 import { fillInputTokens, looksTruncated, relayMessageStream } from './sse.js'
 import { estimateInputTokens } from './tokens.js'
+import { anthropicToOpenAi, openAiToAnthropic, relayOpenAiStreamToAnthropic } from './nvidia.js'
 
 /** Why a client key was rejected → [HTTP status, Anthropic error type, message]. */
 const REJECTIONS = {
@@ -385,10 +386,10 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
 
   let upstream
   let isNvidia = false
-  const maxNvidia = config.maxNvidiaConcurrent ?? 5
+  const maxNvidia = config.maxNvidiaConcurrent ?? 50
 
-  // Hybrid routing: Ưu tiên NVIDIA Free nếu số request song song < maxNvidia và NVIDIA URL khả dụng
-  if (route === 'messages' && config.nvidiaBaseUrl && nvidiaInFlight < maxNvidia) {
+  // Hybrid routing: Ưu tiên NVIDIA NIM Direct nếu có apiKey và chưa vượt quá ngưỡng đồng thời
+  if (route === 'messages' && config.nvidiaApiKey && nvidiaInFlight < maxNvidia) {
     nvidiaInFlight++
     isNvidia = true
     const releaseNvidia = () => {
@@ -398,15 +399,18 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
       }
     }
 
-    const nvidiaTarget = config.nvidiaBaseUrl + upstreamPath + url.search
-    const nvidiaHeaders = { ...headers }
-    delete nvidiaHeaders['x-api-key']
-    nvidiaHeaders['authorization'] = 'Bearer sk-ant-free-dummy'
-
     try {
+      const nvidiaTarget = `${config.nvidiaBaseUrl}/chat/completions`
+      const nvidiaPayload = anthropicToOpenAi(request, config.nvidiaModel)
+      const nvidiaHeaders = {
+        'content-type': 'application/json',
+        'authorization': `Bearer ${config.nvidiaApiKey}`,
+        'accept': request.stream ? 'text/event-stream' : 'application/json',
+      }
+
       upstream = await openUpstream({
         target: nvidiaTarget,
-        init: { method: 'POST', headers: nvidiaHeaders, body: forwardBody },
+        init: { method: 'POST', headers: nvidiaHeaders, body: JSON.stringify(nvidiaPayload) },
         hedgeAfterMs: 0,
         fetchImpl,
         clientSignal: clientAbort.signal,
@@ -419,6 +423,31 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
 
       chargedProvider = 'nvidia'
       res.once('close', releaseNvidia)
+
+      // Direct handle for NVIDIA response conversion (OpenAI -> Anthropic)
+      const nContentType = upstream.res.headers.get('content-type') ?? ''
+      const nChunks = bodyChunks(upstream.first, upstream.reader)
+
+      if (request.stream || nContentType.includes('text/event-stream')) {
+        res.writeHead(200, {
+          'content-type': 'text/event-stream; charset=utf-8',
+          'cache-control': 'no-cache',
+          'connection': 'keep-alive',
+        })
+        await relayOpenAiStreamToAnthropic(nChunks, res, {
+          requestedModel: request.model,
+          onUsage: charge,
+        })
+        return
+      } else {
+        const parts = []
+        for await (const c of nChunks) parts.push(Buffer.from(c))
+        const jsonText = Buffer.concat(parts).toString('utf8')
+        const openAiRes = JSON.parse(jsonText)
+        const anthropicRes = openAiToAnthropic(openAiRes, request.model)
+        charge(anthropicRes.usage)
+        return sendJson(res, 200, anthropicRes)
+      }
     } catch (err) {
       releaseNvidia()
       warn(log, `${label} NVIDIA failover to revid (${describeError(err)})`)

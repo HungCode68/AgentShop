@@ -49,9 +49,11 @@ export function loadConfig(env = process.env, { requireAdminToken = true } = {})
     // No first byte from revidapi after this long: send the same request again and use whichever answers first.
     hedgeAfterMs,
     maxConcurrentPerKey,
-    // NVIDIA NIM free provider hybrid routing (host.docker.internal when inside Docker, or 127.0.0.1 local)
-    nvidiaBaseUrl: (env.NVIDIA_BASE_URL || 'http://host.docker.internal:8082').replace(/\/+$/, ''),
-    maxNvidiaConcurrent: Number(env.MAX_NVIDIA_CONCURRENT ?? 5),
+    // NVIDIA NIM Direct API configuration
+    nvidiaApiKey: (env.NVIDIA_API_KEY ?? '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').trim(),
+    nvidiaBaseUrl: (env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1').replace(/\/+$/, ''),
+    nvidiaModel: env.NVIDIA_MODEL || 'nvidia/nemotron-3.5-super-vl-120b-a12b',
+    maxNvidiaConcurrent: Number(env.MAX_NVIDIA_CONCURRENT ?? 50), // Chịu tải đồng thời lên đến 50-100 req
     nvidiaCreditDiscount: Number(env.NVIDIA_CREDIT_DISCOUNT ?? 0.3), // Giảm 70% chi phí credit khi chạy qua NVIDIA
     // Background poller pings the owner on Telegram when the shared revidapi balance drops below the threshold.
     telegramBotToken: (env.TELEGRAM_BOT_TOKEN ?? '').trim(),
