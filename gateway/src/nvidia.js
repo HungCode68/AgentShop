@@ -239,7 +239,10 @@ export async function relayOpenAiStreamToAnthropic(openAiChunks, res, { requeste
 
   for await (const rawChunk of openAiChunks) {
     if (res.destroyed) break
-    buffer += Buffer.isBuffer(rawChunk) ? rawChunk.toString('utf8') : String(rawChunk)
+    const strChunk = rawChunk instanceof Uint8Array || Buffer.isBuffer(rawChunk)
+      ? Buffer.from(rawChunk).toString('utf8')
+      : String(rawChunk)
+    buffer += strChunk
 
     const lines = buffer.split('\n')
     buffer = lines.pop() ?? '' // keep remainder
