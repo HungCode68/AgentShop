@@ -434,19 +434,29 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
           'cache-control': 'no-cache',
           'connection': 'keep-alive',
         })
-        await relayOpenAiStreamToAnthropic(nChunks, res, {
-          requestedModel: request.model,
-          onUsage: charge,
-        })
+        try {
+          await relayOpenAiStreamToAnthropic(nChunks, res, {
+            requestedModel: request.model,
+            onUsage: charge,
+          })
+        } finally {
+          releaseReservation()
+          release()
+        }
         return
       } else {
-        const parts = []
-        for await (const c of nChunks) parts.push(Buffer.from(c))
-        const jsonText = Buffer.concat(parts).toString('utf8')
-        const openAiRes = JSON.parse(jsonText)
-        const anthropicRes = openAiToAnthropic(openAiRes, request.model)
-        charge(anthropicRes.usage)
-        return sendJson(res, 200, anthropicRes)
+        try {
+          const parts = []
+          for await (const c of nChunks) parts.push(Buffer.from(c))
+          const jsonText = Buffer.concat(parts).toString('utf8')
+          const openAiRes = JSON.parse(jsonText)
+          const anthropicRes = openAiToAnthropic(openAiRes, request.model)
+          charge(anthropicRes.usage)
+          return sendJson(res, 200, anthropicRes)
+        } finally {
+          releaseReservation()
+          release()
+        }
       }
     } catch (err) {
       releaseNvidia()

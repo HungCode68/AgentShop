@@ -112,7 +112,7 @@ export function anthropicToOpenAi(request, targetModel = DEFAULT_NVIDIA_MODEL) {
   const payload = {
     model: targetModel,
     messages,
-    stream: Boolean(request.stream),
+    stream: request.stream !== false, // Always true for Claude Desktop/Code unless explicitly false
     temperature: typeof request.temperature === 'number' ? request.temperature : 0.7,
   }
 
