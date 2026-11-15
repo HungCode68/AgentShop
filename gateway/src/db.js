@@ -44,6 +44,10 @@ export function openDb(path) {
   if (!columns.includes('plan_minutes')) {
     db.exec('ALTER TABLE api_keys ADD COLUMN plan_minutes INTEGER')
   }
+  // Custom token cap for the trial (overrides the global TRIAL_TOKEN_CAP env when set).
+  if (!columns.includes('plan_token_cap')) {
+    db.exec('ALTER TABLE api_keys ADD COLUMN plan_token_cap INTEGER')
+  }
 
   db.exec(`
     -- Usage counters per key for the current rental (see quota.js).

@@ -11,7 +11,7 @@ export class StoreError extends Error {
 const nowIso = () => new Date().toISOString()
 const maskKey = (k) => (k.length <= 12 ? `${k.slice(0, 3)}…` : `${k.slice(0, 6)}…${k.slice(-4)}`)
 
-const PATCHABLE = new Set(['name', 'note', 'upstreamKey', 'expiresAt', 'status', 'plan', 'planMinutes'])
+const PATCHABLE = new Set(['name', 'note', 'upstreamKey', 'expiresAt', 'status', 'plan', 'planMinutes', 'planTokenCap'])
 
 /** Old plan ids (session/week caps) → the credit pack that replaces them. */
 const PLAN_REMAP = { pro: 'pro', max5x: 'business', max20x: 'enterprise', trial: 'trial' }
@@ -35,6 +35,15 @@ function normMinutes(v) {
     throw new StoreError(400, 'planMinutes must be between 1 minute and 525600 minutes (366 days)')
   }
   return Math.round(n)
+}
+
+function normTokenCap(v) {
+  if (v === undefined || v === null || v === '') return null
+  const n = Number(v)
+  if (!Number.isFinite(n) || n < 1) {
+    throw new StoreError(400, 'planTokenCap must be a positive integer (tokens)')
+  }
+  return Math.floor(n)
 }
 
 function normName(v) {
@@ -119,6 +128,7 @@ function toPublic(row) {
     planName: PLANS[row.plan]?.name ?? null,
     planDays: row.plan_days ?? null,
     planMinutes: row.plan_minutes ?? null,
+    planTokenCap: row.plan_token_cap ?? null,
     planStartedAt: row.plan_started_at ?? null,
   }
 }
@@ -192,7 +202,7 @@ export class KeyStore {
     return toPublic(this.#row(id))
   }
 
-  create({ name, note, upstreamKey, expiresAt, plan, planMinutes } = {}) {
+  create({ name, note, upstreamKey, expiresAt, plan, planMinutes, planTokenCap } = {}) {
     const n = normName(name)
     const up = normUpstream(upstreamKey) ?? null
     const p = normPlan(plan) ?? null
@@ -210,13 +220,13 @@ export class KeyStore {
       .prepare(
         `INSERT INTO api_keys
            (name, note, key_hash, key_prefix, key_enc, upstream_key_enc, upstream_fingerprint, upstream_hint, expires_at, created_at, updated_at,
-            plan, plan_days, plan_minutes, plan_started_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+            plan, plan_days, plan_minutes, plan_token_cap, plan_started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
       )
       .run(
         n, normNote(note), sha256(key), this.#displayPrefix(key), encrypt(key, this.#encKey),
         up ? encrypt(up, this.#encKey) : null, fp, up ? maskKey(up) : null, exp, ts, ts,
-        p, minutes, started === null ? null : new Date(started).toISOString(),
+        p, minutes, normTokenCap(planTokenCap), started === null ? null : new Date(started).toISOString(),
       )
     return { key, record: this.get(Number(lastInsertRowid)) }
   }
@@ -250,6 +260,7 @@ export class KeyStore {
     const exp = normExpiresAt(patch.expiresAt)
     const p = normPlan(patch.plan)
     const minutes = normMinutes(patch.planMinutes)
+    const tokenCap = normTokenCap(patch.planTokenCap)
     if (p === null) {
       set('plan', null)
       set('plan_days', null)
@@ -267,6 +278,7 @@ export class KeyStore {
       set('plan', plan)
       set('plan_days', null)
       set('plan_minutes', m)
+      if (tokenCap !== undefined) set('plan_token_cap', tokenCap)
       set('plan_started_at', new Date(started).toISOString())
       if (exp === undefined) set('expires_at', m ? new Date(started + m * MINUTE_MS).toISOString() : null)
     }

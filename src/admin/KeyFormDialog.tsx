@@ -27,6 +27,7 @@ export function KeyFormDialog({ record, trialTokenCap, onSubmit, onClose }: Prop
   const [note, setNote] = useState(record?.note ?? '')
   const [plan, setPlan] = useState<PlanId>(record?.plan ?? 'pro')
   const [minutes, setMinutes] = useState(String(record?.plan === 'trial' && record.planMinutes != null ? record.planMinutes : 60))
+  const [tokenCap, setTokenCap] = useState(String(record?.planTokenCap ?? ''))
   // Editing: the pack only changes when the admin asks for a new period (it resets usage).
   const [renew, setRenew] = useState(!editing || !record.plan)
   const [saving, setSaving] = useState(false)
@@ -34,7 +35,9 @@ export function KeyFormDialog({ record, trialTokenCap, onSubmit, onClose }: Prop
 
   const isTrial = plan === 'trial'
   const minuteCount = Number(minutes)
+  const tokenCapCount = Number(tokenCap)
   const validMinutes = isTrial && Number.isInteger(minuteCount) && minuteCount >= 1 && minuteCount <= 366 * 24 * 60
+  const validTokenCap = !isTrial || tokenCap === '' || (Number.isInteger(tokenCapCount) && tokenCapCount >= 1)
   const pack = PACKS.find((p) => p.id === plan)
   const endsAt = isTrial && validMinutes ? new Date(Date.now() + minuteCount * 60_000) : null
 
@@ -46,7 +49,10 @@ export function KeyFormDialog({ record, trialTokenCap, onSubmit, onClose }: Prop
     if (!editing ? trimmedNote : trimmedNote !== (record.note ?? '')) input.note = trimmedNote || null
     if (renew) {
       input.plan = plan
-      if (isTrial) input.planMinutes = minuteCount
+      if (isTrial) {
+        input.planMinutes = minuteCount
+        if (tokenCap !== '') input.planTokenCap = tokenCapCount
+      }
     }
     return Object.keys(input).length ? input : null
   }
@@ -55,6 +61,7 @@ export function KeyFormDialog({ record, trialTokenCap, onSubmit, onClose }: Prop
     e.preventDefault()
     if (!name.trim()) return setError('Vui lòng nhập tên.')
     if (renew && isTrial && !validMinutes) return setError('Thời gian dùng thử phải là số phút nguyên, từ 1 phút.')
+    if (renew && isTrial && !validTokenCap) return setError('Lượng token dùng thử phải là số nguyên dương.')
     const input = buildInput()
     if (!input) return onClose()
     setSaving(true)
@@ -153,6 +160,18 @@ export function KeyFormDialog({ record, trialTokenCap, onSubmit, onClose }: Prop
                   <div className="field__current field__current--warn">Kỳ mới bắt đầu từ lúc lưu: số liệu dùng được tính lại từ 0.</div>
                 )}
               </div>
+              {isTrial && (
+                <div className="field">
+                  <span className="field__label">Lượng token dùng thử</span>
+                  <span className="pc-input">
+                    <input className="input" inputMode="numeric" value={tokenCap} onChange={(e) => setTokenCap(e.target.value.replace(/[^\d]/g, ''))} />
+                    <span className="pc-input__suffix">token</span>
+                  </span>
+                  <span className="field__hint">
+                    Để trống sẽ dùng mặc định {(trialTokenCap ?? TRIAL().tokenCap).toLocaleString('vi-VN')} token từ cấu hình server.
+                  </span>
+                </div>
+              )}
             )}
             {!isTrial && editing && record.plan && (
               <div className="field__current field__current--warn">Kỳ mới bắt đầu từ lúc lưu: số liệu dùng được tính lại từ 0.</div>

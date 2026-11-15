@@ -26,6 +26,8 @@ export interface KeyRecord {
   planDays: number | null
   /** The trial's length in minutes (paid packs: null). */
   planMinutes: number | null
+  /** Custom token cap for this key's trial (null = use the global default). */
+  planTokenCap: number | null
   planStartedAt: string | null
 }
 
@@ -40,6 +42,7 @@ export interface KeyInput {
   /** Setting plan and/or planMinutes starts a new period from now (usage resets; the trial then expires = now + minutes, a paid pack never expires). */
   plan?: PlanId | null
   planMinutes?: number
+  planTokenCap?: number | null
   expiresAt?: string | null
   status?: 'active' | 'revoked'
 }

@@ -77,7 +77,8 @@ export class QuotaStore {
       if (record.planMinutes && now >= start + record.planMinutes * MINUTE_MS) {
         return { ok: false, limit: 'expired', retryAt: null }
       }
-      if (s.tokensUsed >= planCap(plan)) return { ok: false, limit: 'tokens', retryAt: null }
+      const cap = record.planTokenCap ?? plan.tokenCap
+      if (s.tokensUsed >= cap) return { ok: false, limit: 'tokens', retryAt: null }
       return { ok: true }
     }
     // A paid pack: the credits still available, minus what is reserved by requests in flight.
@@ -145,7 +146,7 @@ export class QuotaStore {
     const now = this.#now()
     const { plan, start, s } = this.#state(record, now)
     const free = plan.free
-    const cap = planCap(plan)
+    const cap = free ? (record.planTokenCap ?? plan.tokenCap) : planCap(plan)
     // A paid pack is measured in credits, the trial in converted tokens.
     const used = free ? s.tokensUsed : s.creditsUsed
     const expiresAt = free && record.planMinutes ? new Date(start + record.planMinutes * MINUTE_MS).toISOString() : null
