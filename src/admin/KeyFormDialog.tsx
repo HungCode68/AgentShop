@@ -127,7 +127,7 @@ export function KeyFormDialog({ record, trialTokenCap, onSubmit, onClose }: Prop
               )}
               {isTrial && (
                 <span className="field__hint">
-                  Miễn phí cho khách trải nghiệm: tối đa <b>{(trialTokenCap ?? TRIAL.tokenCap).toLocaleString('vi-VN')} token</b> trong thời gian thử.
+                  Miễn phí cho khách trải nghiệm: tối đa <b>{(trialTokenCap ?? TRIAL().tokenCap).toLocaleString('vi-VN')} token</b> trong thời gian thử.
                 </span>
               )}
             </div>
