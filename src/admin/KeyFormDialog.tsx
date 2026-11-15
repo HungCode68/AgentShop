@@ -160,8 +160,7 @@ export function KeyFormDialog({ record, trialTokenCap, onSubmit, onClose }: Prop
                   <div className="field__current field__current--warn">Kỳ mới bắt đầu từ lúc lưu: số liệu dùng được tính lại từ 0.</div>
                 )}
               </div>
-              {isTrial && (
-                <div className="field">
+              <div className="field">
                   <span className="field__label">Lượng token dùng thử</span>
                   <span className="pc-input">
                     <input className="input" inputMode="numeric" value={tokenCap} onChange={(e) => setTokenCap(e.target.value.replace(/[^\d]/g, ''))} />
