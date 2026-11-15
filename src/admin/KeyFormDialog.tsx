@@ -140,6 +140,7 @@ export function KeyFormDialog({ record, trialTokenCap, onSubmit, onClose }: Prop
             </div>
 
             {isTrial && (
+              <>
               <div className="field">
                 <span className="field__label">
                   Thời gian dùng thử <em>*</em>
@@ -161,16 +162,16 @@ export function KeyFormDialog({ record, trialTokenCap, onSubmit, onClose }: Prop
                 )}
               </div>
               <div className="field">
-                  <span className="field__label">Lượng token dùng thử</span>
-                  <span className="pc-input">
-                    <input className="input" inputMode="numeric" value={tokenCap} onChange={(e) => setTokenCap(e.target.value.replace(/[^\d]/g, ''))} />
-                    <span className="pc-input__suffix">token</span>
-                  </span>
-                  <span className="field__hint">
-                    Để trống sẽ dùng mặc định {(trialTokenCap ?? TRIAL().tokenCap).toLocaleString('vi-VN')} token từ cấu hình server.
-                  </span>
-                </div>
-              )}
+                <span className="field__label">Lượng token dùng thử</span>
+                <span className="pc-input">
+                  <input className="input" inputMode="numeric" value={tokenCap} onChange={(e) => setTokenCap(e.target.value.replace(/[^\d]/g, ''))} />
+                  <span className="pc-input__suffix">token</span>
+                </span>
+                <span className="field__hint">
+                  Để trống sẽ dùng mặc định {(trialTokenCap ?? TRIAL().tokenCap).toLocaleString('vi-VN')} token từ cấu hình server.
+                </span>
+              </div>
+              </>
             )}
             {!isTrial && editing && record.plan && (
               <div className="field__current field__current--warn">Kỳ mới bắt đầu từ lúc lưu: số liệu dùng được tính lại từ 0.</div>

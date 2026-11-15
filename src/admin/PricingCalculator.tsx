@@ -50,7 +50,7 @@ export function PricingCalculator({ trialTokenCap }: { trialTokenCap?: number })
             ))}
             <tr>
               <td data-label="Gói">
-                <b>{TRIAL.name}</b>
+                <b>{trial.name}</b>
               </td>
               <td data-label="Credit">—</td>
               <td data-label="Giá vốn">tối đa ~3.600đ</td>
