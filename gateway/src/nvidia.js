@@ -112,7 +112,9 @@ export function anthropicToOpenAi(request, targetModel = DEFAULT_NVIDIA_MODEL) {
   const payload = {
     model: targetModel,
     messages,
-    stream: request.stream !== false, // Always true for Claude Desktop/Code unless explicitly false
+    // Anthropic streams only when asked: a request without "stream" expects one JSON answer.
+    // Claude Code's side requests (e.g. auto mode's safety check) rely on this.
+    stream: request.stream === true,
     temperature: typeof request.temperature === 'number' ? request.temperature : 0.7,
   }
 
@@ -121,6 +123,16 @@ export function anthropicToOpenAi(request, targetModel = DEFAULT_NVIDIA_MODEL) {
   }
   if (tools) {
     payload.tools = tools
+    const choice = toolChoice(request.tool_choice)
+    if (choice !== undefined) payload.tool_choice = choice
+    if (request.tool_choice?.disable_parallel_tool_use === true) payload.parallel_tool_calls = false
+  }
+  if (Array.isArray(request.stop_sequences) && request.stop_sequences.length > 0) {
+    payload.stop = request.stop_sequences.slice(0, 4) // OpenAI accepts at most 4
+  }
+  const format = outputFormat(request)
+  if (format?.type === 'json_schema' && format.schema) {
+    payload.response_format = { type: 'json_schema', json_schema: { name: 'output', schema: format.schema, strict: true } }
   }
 
   // 4. Map Thinking / Effort
@@ -142,6 +154,43 @@ export function anthropicToOpenAi(request, targetModel = DEFAULT_NVIDIA_MODEL) {
   }
 
   return payload
+}
+
+/** Anthropic tool_choice → OpenAI tool_choice (undefined = leave the provider default). */
+function toolChoice(tc) {
+  switch (tc?.type) {
+    case 'auto':
+      return 'auto'
+    case 'any':
+      return 'required'
+    case 'none':
+      return 'none'
+    case 'tool':
+      return tc.name ? { type: 'function', function: { name: tc.name } } : 'required'
+    default:
+      return undefined
+  }
+}
+
+/** Structured output request (output_config.format, or the older top-level output_format). */
+const outputFormat = (request) => request.output_config?.format ?? request.output_format
+
+/**
+ * One-line description of a request for the log: which features it uses, never its content
+ * (no prompt, system or tool text), so side requests that misbehave on NVIDIA can be identified.
+ */
+export function requestShape(request) {
+  const tc = request.tool_choice
+  const choice = !tc ? 'none' : tc.type === 'tool' ? `tool:${tc.name}` : tc.type
+  return [
+    `model=${request.model}`,
+    `stream=${request.stream === true}`,
+    `max_tokens=${request.max_tokens ?? '-'}`,
+    `tools=${Array.isArray(request.tools) ? request.tools.length : 0}`,
+    `tool_choice=${choice}`,
+    `stop=${Array.isArray(request.stop_sequences) ? request.stop_sequences.length : 0}`,
+    `format=${outputFormat(request)?.type ?? 'none'}`,
+  ].join(' ')
 }
 
 /**

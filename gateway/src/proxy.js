@@ -3,7 +3,7 @@ import { ALLOWED_MODELS, convertedTokens, creditsForUsage, MODEL_RATES, normaliz
 import { estimateRequestCredits } from './quota.js'
 import { fillInputTokens, looksTruncated, relayMessageStream } from './sse.js'
 import { estimateInputTokens } from './tokens.js'
-import { anthropicToOpenAi, openAiToAnthropic, relayOpenAiStreamToAnthropic } from './nvidia.js'
+import { anthropicToOpenAi, openAiToAnthropic, relayOpenAiStreamToAnthropic, requestShape } from './nvidia.js'
 
 /** Why a client key was rejected → [HTTP status, Anthropic error type, message]. */
 const REJECTIONS = {
@@ -399,6 +399,13 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
       }
     }
 
+    // Chat turns stream; anything else (non-streamed, forced tool, JSON output) is a Claude Code
+    // side request such as auto mode's safety check. Log its shape (never its content) so one that
+    // misbehaves on NVIDIA can be identified.
+    if (request.stream !== true || request.tool_choice || request.output_config?.format || request.output_format) {
+      log?.(`${new Date().toISOString()} INFO ${label} [nvidia] side request ${requestShape(request)}`)
+    }
+
     try {
       const nvidiaTarget = `${config.nvidiaBaseUrl}/chat/completions`
       const nvidiaPayload = anthropicToOpenAi(request, config.nvidiaModel)
@@ -425,10 +432,10 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
       res.once('close', releaseNvidia)
 
       // Direct handle for NVIDIA response conversion (OpenAI -> Anthropic)
-      const nContentType = upstream.res.headers.get('content-type') ?? ''
       const nChunks = bodyChunks(upstream.first, upstream.reader)
 
-      if (request.stream || nContentType.includes('text/event-stream')) {
+      // Answer in the form the client asked for: SSE only when it asked to stream.
+      if (request.stream === true) {
         res.writeHead(200, {
           'content-type': 'text/event-stream; charset=utf-8',
           'cache-control': 'no-cache',

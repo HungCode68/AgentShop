@@ -1389,3 +1389,74 @@ describe('setup endpoint', () => {
     }
   })
 })
+
+describe('NVIDIA route: Claude Code side requests', () => {
+  /** Fake NVIDIA NIM (OpenAI-compatible): answers JSON or SSE depending on the request's "stream". */
+  async function withNvidia(fn) {
+    const seen = []
+    const nim = createServer(async (req, res) => {
+      const chunks = []
+      for await (const c of req) chunks.push(c)
+      const body = JSON.parse(Buffer.concat(chunks).toString())
+      seen.push(body)
+      if (body.stream) {
+        res.writeHead(200, { 'content-type': 'text/event-stream' })
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'hi' } }] })}\n\n`)
+        return res.end('data: [DONE]\n\n')
+      }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(
+        JSON.stringify({
+          id: 'chatcmpl-1',
+          choices: [
+            {
+              finish_reason: 'tool_calls',
+              message: { content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'verdict', arguments: '{"ok":true}' } }] },
+            },
+          ],
+          usage: { prompt_tokens: 20, completion_tokens: 5 },
+        }),
+      )
+    })
+    nim.listen(0)
+    await once(nim, 'listening')
+    try {
+      const extraConfig = { nvidiaApiKey: 'nvapi-test', nvidiaBaseUrl: `http://127.0.0.1:${nim.address().port}/v1`, nvidiaModel: 'nim-test' }
+      return await withGateway({ extraConfig }, (gwBase, lines) => fn(gwBase, lines, seen))
+    } finally {
+      nim.close()
+    }
+  }
+
+  const sideRequest = {
+    tools: [{ name: 'verdict', input_schema: { type: 'object', properties: { ok: { type: 'boolean' } } } }],
+    tool_choice: { type: 'tool', name: 'verdict' },
+  }
+
+  test('a request without "stream" gets one JSON message back, with the forced tool call', async () => {
+    const { key } = planKey()
+    await withNvidia(async (gwBase, lines, seen) => {
+      const res = await ask(gwBase, key, sideRequest)
+      assert.equal(res.status, 200)
+      assert.match(res.headers.get('content-type'), /application\/json/)
+      const msg = await res.json()
+      assert.equal(msg.stop_reason, 'tool_use')
+      assert.deepEqual(msg.content, [{ type: 'tool_use', id: 'call_1', name: 'verdict', input: { ok: true } }])
+      assert.equal(seen[0].stream, false)
+      assert.deepEqual(seen[0].tool_choice, { type: 'function', function: { name: 'verdict' } })
+      assert.equal(received.length, 0, 'answered by NVIDIA, revid not called')
+      assert.ok(lines.some((l) => l.includes('[nvidia] side request') && l.includes('stream=false') && l.includes('tool_choice=tool:verdict')))
+    })
+  })
+
+  test('a streamed chat request still streams and is not logged', async () => {
+    const { key } = planKey()
+    await withNvidia(async (gwBase, lines, seen) => {
+      const res = await ask(gwBase, key, { stream: true })
+      assert.match(res.headers.get('content-type'), /text\/event-stream/)
+      assert.match(await res.text(), /message_stop/)
+      assert.equal(seen[0].stream, true)
+      assert.ok(!lines.some((l) => l.includes('[nvidia] side request')))
+    })
+  })
+})
