@@ -123,6 +123,24 @@ export function anthropicToOpenAi(request, targetModel = DEFAULT_NVIDIA_MODEL) {
     payload.tools = tools
   }
 
+  // 4. Map Thinking / Effort
+  if (request.thinking && typeof request.thinking === 'object') {
+    if (request.thinking.type === 'enabled') {
+      const budget = request.thinking.budget_tokens || 2048
+      if (budget <= 2048) {
+        payload.reasoning_effort = 'low'
+      } else if (budget <= 8192) {
+        payload.reasoning_effort = 'medium'
+      } else {
+        payload.reasoning_effort = 'high'
+      }
+      // Đảm bảo max_tokens của NVIDIA đủ lớn để chứa cả thinking budget và câu trả lời
+      if (payload.max_tokens && payload.max_tokens < budget + 1024) {
+        payload.max_tokens = budget + 2048
+      }
+    }
+  }
+
   return payload
 }
 
