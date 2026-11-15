@@ -61,7 +61,8 @@ export const normalizeModel = (m) =>
 
 /**
  * The packs we sell. `credits` is what the customer may spend in total; `price` is what we
- * charge them (confirmed 2026-11-13: Mini 40k, Starter 130k, Pro 300k, Business 700k, Enterprise 1.400k).
+ * charge them (prices confirmed 2026-11-13: Mini 40k, Starter 130k, Pro 300k, Business 700k, Enterprise 1.400k;
+ * credits raised 2026-11-15 to Mini 1.000, Starter 2.500, Pro 7.000, Business 15.000, Enterprise 35.000).
  * A paid pack has no time limit: "use it whenever, until the credits run out".
  */
 /** Trial token cap, overridable via TRIAL_TOKEN_CAP env (default 100_000). */
@@ -80,11 +81,11 @@ export const PLANS = {
     // Default trial length in minutes; the admin can set another one per key.
     defaultMinutes: 60,
   },
-  mini: { id: 'mini', name: 'Mini', free: false, credits: 500, tokenCap: null, price: 40_000 },
-  starter: { id: 'starter', name: 'Starter', free: false, credits: 1_500, tokenCap: null, price: 130_000 },
-  pro: { id: 'pro', name: 'Pro', free: false, credits: 5_000, tokenCap: null, price: 300_000 },
-  business: { id: 'business', name: 'Business', free: false, credits: 13_000, tokenCap: null, price: 700_000 },
-  enterprise: { id: 'enterprise', name: 'Enterprise', free: false, credits: 30_000, tokenCap: null, price: 1_400_000 },
+  mini: { id: 'mini', name: 'Mini', free: false, credits: 1_000, tokenCap: null, price: 40_000 },
+  starter: { id: 'starter', name: 'Starter', free: false, credits: 2_500, tokenCap: null, price: 130_000 },
+  pro: { id: 'pro', name: 'Pro', free: false, credits: 7_000, tokenCap: null, price: 300_000 },
+  business: { id: 'business', name: 'Business', free: false, credits: 15_000, tokenCap: null, price: 700_000 },
+  enterprise: { id: 'enterprise', name: 'Enterprise', free: false, credits: 35_000, tokenCap: null, price: 1_400_000 },
 }
 export const PLAN_IDS = Object.keys(PLANS)
 

@@ -423,10 +423,10 @@ describe('plans and cost accounting', () => {
 
   test('a plan is capped in credits; the trial in tokens', () => {
     assert.equal(planCap(PLANS.pro), PLANS.pro.credits)
-    assert.equal(planCap(PLANS.mini), 500)
-    assert.equal(planCap(PLANS.starter), 1_500)
-    assert.equal(planCap(PLANS.business), 13_000)
-    assert.equal(planCap(PLANS.enterprise), 30_000)
+    assert.equal(planCap(PLANS.mini), 1_000)
+    assert.equal(planCap(PLANS.starter), 2_500)
+    assert.equal(planCap(PLANS.business), 15_000)
+    assert.equal(planCap(PLANS.enterprise), 35_000)
     assert.equal(planCap(PLANS.trial), 100_000)
     assert.equal(PLANS.trial.credits, 0, 'the trial is free')
   })
@@ -746,7 +746,7 @@ describe('AI proxy (revidapi)', () => {
     assert.equal(res.headers.get('retry-after'), null, 'a pack never refills')
     const err = (await res.json()).error
     assert.equal(err.type, 'rate_limit_error')
-    assert.match(err.message, /Gói Pro đã dùng hết 5\.000 credit được mua/)
+    assert.ok(err.message.includes(`Gói Pro đã dùng hết ${PLANS.pro.credits.toLocaleString('vi-VN')} credit được mua`), err.message)
     assert.equal(received.length, 0)
   })
 

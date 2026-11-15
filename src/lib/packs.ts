@@ -18,11 +18,11 @@ export interface PublicPack {
 }
 
 export const PACKS: PublicPack[] = [
-  { id: 'mini', name: 'Mini', credits: 500, priceVnd: 40_000, tagline: 'Trải nghiệm, dùng thử vài buổi' },
-  { id: 'starter', name: 'Starter', credits: 1_500, priceVnd: 130_000, tagline: 'Cá nhân, dùng nhẹ hằng tuần' },
-  { id: 'pro', name: 'Pro', credits: 5_000, priceVnd: 300_000, tagline: 'Code và làm việc hằng ngày' },
-  { id: 'business', name: 'Business', credits: 13_000, priceVnd: 700_000, tagline: 'Dùng nhiều, nhóm nhỏ' },
-  { id: 'enterprise', name: 'Enterprise', credits: 30_000, priceVnd: 1_400_000, tagline: 'Nhóm, dùng liên tục' },
+  { id: 'mini', name: 'Mini', credits: 1_000, priceVnd: 40_000, tagline: 'Trải nghiệm, dùng thử vài buổi' },
+  { id: 'starter', name: 'Starter', credits: 2_500, priceVnd: 130_000, tagline: 'Cá nhân, dùng nhẹ hằng tuần' },
+  { id: 'pro', name: 'Pro', credits: 7_000, priceVnd: 300_000, tagline: 'Code và làm việc hằng ngày' },
+  { id: 'business', name: 'Business', credits: 15_000, priceVnd: 700_000, tagline: 'Dùng nhiều, nhóm nhỏ' },
+  { id: 'enterprise', name: 'Enterprise', credits: 35_000, priceVnd: 1_400_000, tagline: 'Nhóm, dùng liên tục' },
 ]
 /** The pack highlighted as the usual choice. */
 export const POPULAR_PACK: PackId = 'pro'
