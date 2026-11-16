@@ -1,21 +1,25 @@
 import { safeEqual } from './crypto.js'
 import { readJson, sendJson } from './http.js'
 import { usageData } from './proxy.js'
+import { probeNvidia } from './nvidia.js'
 import { sendTelegramMessage } from './telegram.js'
 import { trialTokenCap } from './plans.js'
 
 /**
  * Admin API (Authorization: Bearer <ADMIN_TOKEN>), used by the /admin page and by curl.
  *   GET    /api/admin/keys              list keys
- *   POST   /api/admin/keys              create   {name, plan?, planMinutes?, expiresAt?, note?}
+ *   POST   /api/admin/keys              create   {name, plan?, planMinutes?, nvidiaKey?, expiresAt?, note?}
  *   GET    /api/admin/keys/:id          show
- *   PATCH  /api/admin/keys/:id          update   {name?, note?, plan?, planMinutes?, expiresAt?, status?}
+ *   PATCH  /api/admin/keys/:id          update   {name?, note?, plan?, planMinutes?, nvidiaKey?, expiresAt?, status?}
+ *                                       (nvidiaKey = the customer's own NVIDIA key, stored encrypted; null removes it)
  *                                       (plan/planMinutes start a new period from now: usage resets,
  *                                        the trial expires = now + minutes; a paid pack never expires)
  *   POST   /api/admin/keys/:id/rotate   issue a new client key (old one stops working)
  *   GET    /api/admin/keys/:id/usage    plan usage of the key (credits or tokens used, remaining, per model)
  *   GET    /api/admin/upstream          revidapi account balance (credits) and today's use
  *   POST   /api/admin/telegram-test     send a test message to the Telegram alert chat → {ok} | {ok: false, error}
+ *   POST   /api/admin/nvidia-test       {key?} | {id?} | {}  test a typed key, a customer's saved key or the shared
+ *                                       NVIDIA key → {ok, source, model, ms} | {ok: false, source, error}
  *   GET    /api/admin/keys/:id/key      the full client key, to copy it again
  *   DELETE /api/admin/keys/:id          delete
  */
@@ -42,6 +46,25 @@ export async function handleAdmin(req, res, url, { store, quota, config, fetchIm
     })
     log?.(`${new Date().toISOString()} ${r.ok ? 'INFO telegram test message sent' : `WARN telegram test message failed: ${r.error}`}`)
     return sendJson(res, 200, r)
+  }
+  if (parts[0] === 'nvidia-test' && parts.length === 1) {
+    if (req.method !== 'POST') return sendJson(res, 405, { error: 'Method not allowed' })
+    // Which key to test: one typed in the form, a customer's saved key, or the shared key.
+    const body = await readJson(req)
+    let apiKey = typeof body?.key === 'string' ? body.key.trim() : ''
+    let source = 'typed'
+    if (!apiKey && Number.isInteger(body?.id)) {
+      apiKey = store.nvidiaKeyOf(body.id) ?? ''
+      source = 'saved'
+    }
+    if (!apiKey) {
+      apiKey = config.nvidiaApiKey
+      source = 'shared'
+    }
+    if (!apiKey) return sendJson(res, 200, { ok: false, source, error: 'Chưa có key NVIDIA nào (cả key riêng lẫn key chung của hệ thống).' })
+    const r = await probeNvidia({ baseUrl: config.nvidiaBaseUrl, model: config.nvidiaModel, apiKey, fetchImpl })
+    log?.(`${new Date().toISOString()} ${r.ok ? 'INFO' : 'WARN'} nvidia connection test (${source} key): ${r.ok ? `ok in ${r.ms}ms` : r.error}`)
+    return sendJson(res, 200, { source, ...r })
   }
   if (parts[0] === 'config' && parts.length === 1) {
     if (req.method !== 'GET') return sendJson(res, 405, { error: 'Method not allowed' })

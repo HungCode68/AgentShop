@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import type { KeyInput, KeyRecord, PlanId } from './api'
+import type { KeyInput, KeyRecord, NvidiaTestResult, PlanId } from './api'
 import { fmtTokenCount, PACKS, TRIAL, tokensWorth } from './pricing'
 import { InlineError, Modal } from './ui'
 import { formatShort } from './util'
@@ -9,6 +9,8 @@ interface Props {
   record?: KeyRecord
   /** Trial token cap from server config (overrides the compile-time default). */
   trialTokenCap?: number
+  /** Tests a NVIDIA key: one typed in the form, this customer's saved key (id), or the shared key ({}). */
+  onTestNvidia: (input: { key?: string; id?: number }) => Promise<NvidiaTestResult>
   onSubmit: (input: KeyInput) => Promise<void>
   onClose: () => void
 }
@@ -21,13 +23,21 @@ const PLAN_CHOICES: { id: PlanId; name: string; credits: number; priceVnd: numbe
   { id: 'trial', name: TRIAL().name, credits: 0, priceVnd: 0 },
 ]
 
-export function KeyFormDialog({ record, trialTokenCap, onSubmit, onClose }: Props) {
+const NV_SOURCE = { typed: 'key vừa nhập', saved: 'key riêng đã lưu', shared: 'key chung của hệ thống' } as const
+
+export function KeyFormDialog({ record, trialTokenCap, onTestNvidia, onSubmit, onClose }: Props) {
   const editing = !!record
   const [name, setName] = useState(record?.name ?? '')
   const [note, setNote] = useState(record?.note ?? '')
   const [plan, setPlan] = useState<PlanId>(record?.plan ?? 'pro')
   const [minutes, setMinutes] = useState(String(record?.plan === 'trial' && record.planMinutes != null ? record.planMinutes : 60))
   const [tokenCap, setTokenCap] = useState(String(record?.planTokenCap ?? ''))
+  // The customer's own NVIDIA key: typed here (never shown back, only its masked form), or removed.
+  const [nvidiaKey, setNvidiaKey] = useState('')
+  const [showNvidiaKey, setShowNvidiaKey] = useState(false)
+  const [clearNvidia, setClearNvidia] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [nvidiaTest, setNvidiaTest] = useState<NvidiaTestResult | null>(null)
   // Editing: the pack only changes when the admin asks for a new period (it resets usage).
   const [renew, setRenew] = useState(!editing || !record.plan)
   const [saving, setSaving] = useState(false)
@@ -38,6 +48,9 @@ export function KeyFormDialog({ record, trialTokenCap, onSubmit, onClose }: Prop
   const tokenCapCount = Number(tokenCap)
   const validMinutes = isTrial && Number.isInteger(minuteCount) && minuteCount >= 1 && minuteCount <= 366 * 24 * 60
   const validTokenCap = !isTrial || tokenCap === '' || (Number.isInteger(tokenCapCount) && tokenCapCount >= 1)
+  const typedNvidiaKey = nvidiaKey.trim()
+  const validNvidiaKey = !typedNvidiaKey || /^\S{8,4096}$/.test(typedNvidiaKey)
+  const hasSavedNvidiaKey = !!record?.nvidiaKey && !clearNvidia
   const pack = PACKS.find((p) => p.id === plan)
   const endsAt = isTrial && validMinutes ? new Date(Date.now() + minuteCount * 60_000) : null
 
@@ -54,12 +67,29 @@ export function KeyFormDialog({ record, trialTokenCap, onSubmit, onClose }: Prop
         if (tokenCap !== '') input.planTokenCap = tokenCapCount
       }
     }
+    // The NVIDIA key does not depend on the plan: a new one replaces the old, "remove" goes back to the shared key.
+    if (typedNvidiaKey) input.nvidiaKey = typedNvidiaKey
+    else if (editing && clearNvidia && record.nvidiaKey) input.nvidiaKey = null
     return Object.keys(input).length ? input : null
+  }
+
+  async function testConnection() {
+    setTesting(true)
+    setNvidiaTest(null)
+    try {
+      // Typed key first; else this customer's saved key; else the shared key.
+      setNvidiaTest(await onTestNvidia(typedNvidiaKey ? { key: typedNvidiaKey } : hasSavedNvidiaKey && record ? { id: record.id } : {}))
+    } catch (err) {
+      setNvidiaTest({ ok: false, error: (err as Error).message })
+    } finally {
+      setTesting(false)
+    }
   }
 
   async function submit(e: FormEvent) {
     e.preventDefault()
     if (!name.trim()) return setError('Vui lòng nhập tên.')
+    if (!validNvidiaKey) return setError('Key NVIDIA không hợp lệ (không chứa khoảng trắng, từ 8 ký tự).')
     if (renew && isTrial && !validMinutes) return setError('Thời gian dùng thử phải là số phút nguyên, từ 1 phút.')
     if (renew && isTrial && !validTokenCap) return setError('Lượng token dùng thử phải là số nguyên dương.')
     const input = buildInput()
@@ -178,6 +208,61 @@ export function KeyFormDialog({ record, trialTokenCap, onSubmit, onClose }: Prop
             )}
           </>
         )}
+
+        <div className="field">
+          <span className="field__label">Key NVIDIA riêng</span>
+          {hasSavedNvidiaKey && (
+            <div className="field__current">
+              Đang dùng key riêng: <code>{record?.nvidiaKey}</code>
+            </div>
+          )}
+          <input
+            className="input"
+            type={showNvidiaKey ? 'text' : 'password'}
+            value={nvidiaKey}
+            onChange={(e) => {
+              setNvidiaKey(e.target.value)
+              setNvidiaTest(null)
+            }}
+            placeholder={hasSavedNvidiaKey ? 'Nhập key mới để thay thế' : 'nvapi-…'}
+            autoComplete="off"
+            spellCheck={false}
+            aria-label="Key NVIDIA riêng"
+          />
+          <div className="nv-actions">
+            <button type="button" className="btn btn--ghost" onClick={testConnection} disabled={testing || !validNvidiaKey}>
+              {testing && <span className="spinner" />}
+              {testing ? 'Đang kiểm tra…' : 'Kiểm tra kết nối'}
+            </button>
+            <label className="checkbox">
+              <input type="checkbox" checked={showNvidiaKey} onChange={(e) => setShowNvidiaKey(e.target.checked)} />
+              Hiện key
+            </label>
+            {editing && record.nvidiaKey && (
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={clearNvidia}
+                  onChange={(e) => {
+                    setClearNvidia(e.target.checked)
+                    setNvidiaTest(null)
+                  }}
+                />
+                Xoá key riêng (dùng lại key chung)
+              </label>
+            )}
+          </div>
+          {nvidiaTest && (
+            <span className={`field__hint nv-test nv-test--${nvidiaTest.ok ? 'ok' : 'fail'}`} role="status">
+              {nvidiaTest.ok
+                ? `Kết nối được · model ${nvidiaTest.model} · ${nvidiaTest.ms} ms · đã thử bằng ${NV_SOURCE[nvidiaTest.source]}.`
+                : `${nvidiaTest.error}${nvidiaTest.source ? ` (đã thử bằng ${NV_SOURCE[nvidiaTest.source]})` : ''}`}
+            </span>
+          )}
+          <span className="field__hint">
+            Để trống thì khách dùng key NVIDIA chung của hệ thống. Mỗi key NVIDIA có giới hạn tốc độ riêng, nên khách dùng nhiều nên có key riêng. Nút kiểm tra thử key vừa nhập, nếu để trống thì thử key đã lưu hoặc key chung.
+          </span>
+        </div>
 
         <label className="field">
           <span className="field__label">Ghi chú</span>

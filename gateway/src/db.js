@@ -44,6 +44,10 @@ export function openDb(path) {
   if (!columns.includes('plan_minutes')) {
     db.exec('ALTER TABLE api_keys ADD COLUMN plan_minutes INTEGER')
   }
+  // A customer's own NVIDIA key, encrypted like the other keys, plus a masked copy for display.
+  // It serves that customer's NVIDIA requests, so one key's rate limit is not shared by everybody.
+  if (!columns.includes('nvidia_key_enc')) db.exec('ALTER TABLE api_keys ADD COLUMN nvidia_key_enc TEXT')
+  if (!columns.includes('nvidia_hint')) db.exec('ALTER TABLE api_keys ADD COLUMN nvidia_hint TEXT')
   // Custom token cap for the trial (overrides the global TRIAL_TOKEN_CAP env when set).
   if (!columns.includes('plan_token_cap')) {
     db.exec('ALTER TABLE api_keys ADD COLUMN plan_token_cap INTEGER')

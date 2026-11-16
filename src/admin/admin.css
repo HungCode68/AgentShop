@@ -864,3 +864,21 @@ textarea {
 .balance__warn {
   color: var(--warn);
 }
+
+/* Customer's own NVIDIA key: connection test and the marker in the key table */
+.nv-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.nv-test--ok {
+  color: var(--ok);
+}
+.nv-test--fail {
+  color: var(--danger);
+}
+.nv-own {
+  color: var(--accent);
+  font-weight: 500;
+}

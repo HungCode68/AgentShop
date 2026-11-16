@@ -293,6 +293,8 @@ function KeysView({ api, initialKeys, trialTokenCap, onUnauthorized }: KeysViewP
     setDialog({ type: 'issued', issued, rotated: false })
   }
 
+  const testNvidia = (input: { key?: string; id?: number }) => guard(() => api.nvidiaTest(input))
+
   const edit = (id: number) => async (input: KeyInput) => {
     upsert(await guard(() => api.update(id, input)))
     setDialog(null)
@@ -458,6 +460,11 @@ function KeysView({ api, initialKeys, trialTokenCap, onUnauthorized }: KeysViewP
                         #{k.id}
                         {k.note ? ` · ${k.note}` : ''}
                       </span>
+                      {k.nvidiaKey && (
+                        <span className="small nv-own" title={`Key NVIDIA riêng: ${k.nvidiaKey}`}>
+                          NVIDIA riêng
+                        </span>
+                      )}
                     </td>
                     <td data-label="Key">
                       <code>{k.keyPrefix}</code>
@@ -554,8 +561,8 @@ function KeysView({ api, initialKeys, trialTokenCap, onUnauthorized }: KeysViewP
         )}
       </div>
 
-      {dialog?.type === 'create' && <KeyFormDialog trialTokenCap={trialTokenCap} onSubmit={create} onClose={() => setDialog(null)} />}
-      {dialog?.type === 'edit' && <KeyFormDialog record={dialog.record} trialTokenCap={trialTokenCap} onSubmit={edit(dialog.record.id)} onClose={() => setDialog(null)} />}
+      {dialog?.type === 'create' && <KeyFormDialog trialTokenCap={trialTokenCap} onTestNvidia={testNvidia} onSubmit={create} onClose={() => setDialog(null)} />}
+      {dialog?.type === 'edit' && <KeyFormDialog record={dialog.record} trialTokenCap={trialTokenCap} onTestNvidia={testNvidia} onSubmit={edit(dialog.record.id)} onClose={() => setDialog(null)} />}
       {dialog?.type === 'issued' && <NewKeyDialog issued={dialog.issued} rotated={dialog.rotated} onClose={() => setDialog(null)} />}
       {dialog?.type === 'confirm' && (
         <ConfirmDialog

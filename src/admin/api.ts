@@ -12,6 +12,8 @@ export interface KeyRecord {
   /** false for keys created before the gateway stored a copy; rotating fixes it. */
   canCopy: boolean
   upstreamKey: string | null
+  /** The customer's own NVIDIA key, masked (null = they use the shared key). */
+  nvidiaKey: string | null
   status: 'active' | 'revoked'
   effectiveStatus: KeyStatus
   expiresAt: string | null
@@ -43,6 +45,8 @@ export interface KeyInput {
   plan?: PlanId | null
   planMinutes?: number
   planTokenCap?: number | null
+  /** A customer's own NVIDIA key: a string sets or replaces it, null removes it (the shared key is used again). */
+  nvidiaKey?: string | null
   expiresAt?: string | null
   status?: 'active' | 'revoked'
 }
@@ -64,6 +68,11 @@ export type UpstreamBalance =
     }
   | { ok: false; error: string }
 
+/** Result of POST /api/admin/nvidia-test; "source" says which key was tested. */
+export type NvidiaTestResult =
+  | { ok: true; source: 'typed' | 'saved' | 'shared'; model: string; ms: number; reply: string }
+  | { ok: false; source?: 'typed' | 'saved' | 'shared'; error: string }
+
 export class AdminError extends Error {
   constructor(
     message: string,
@@ -84,6 +93,7 @@ const ERRORS_VI: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/^Key is not linked to an upstream account yet\.$/, () => 'Key chưa được gán key agentshop.'],
   [/^Key has no plan yet\.$/, () => 'Key chưa có gói.'],
   [/^plan must be one of/, () => 'Gói không hợp lệ.'],
+  [/^nvidiaKey must be/, () => 'Key NVIDIA không hợp lệ (không chứa khoảng trắng, từ 8 ký tự).'],
   [/^planMinutes must be/, () => 'Thời gian dùng thử phải là số phút từ 1 tới 525600.'],
   [/^plan is required to set planMinutes$/, () => 'Cần chọn gói trước khi đặt thời gian dùng thử.'],
   [/^This key was created before key copying/, () => 'Key này được tạo trước khi có tính năng sao chép. Hãy cấp lại key để có thể sao chép.'],
@@ -147,6 +157,8 @@ export function createAdminApi(token: string) {
     upstream: () => request<UpstreamBalance>('/upstream'),
     /** Sends a test message to the Telegram alert chat. */
     telegramTest: () => request<{ ok: true } | { ok: false; error: string }>('/telegram-test', { method: 'POST' }),
+    /** Tests a NVIDIA key: one typed in the form, a customer's saved key (id), or the shared key ({}). */
+    nvidiaTest: (input: { key?: string; id?: number }) => request<NvidiaTestResult>('/nvidia-test', json('POST', input)),
     /** Admin-visible runtime config (e.g. trial token cap). */
     adminConfig: () => request<{ trialTokenCap: number }>('/config', { method: 'GET' }),
     revealKey: (id: number) => request<{ key: string }>(`/keys/${id}/key`).then((r) => r.key),

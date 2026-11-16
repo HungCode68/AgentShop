@@ -154,8 +154,11 @@ const fmtCredits = (n) => (n >= 1e6 ? `${(n / 1e6).toLocaleString('vi-VN', { max
 /** Requests currently running per key id (to cap concurrency). */
 const inFlight = new Map()
 
-/** Requests currently running on NVIDIA free provider (to cap concurrency and route to Revid). */
-let nvidiaInFlight = 0
+/**
+ * Requests currently running on NVIDIA, per NVIDIA key: "shared" for the gateway's own key, "own:<id>" for a
+ * customer's key. Each is capped at MAX_NVIDIA_CONCURRENT; beyond that a request goes to revid instead.
+ */
+const nvidiaInFlight = new Map()
 
 /* ------------------------------------------------------------------ upstream */
 
@@ -414,14 +417,30 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
   let isNvidia = false
   const maxNvidia = config.maxNvidiaConcurrent ?? 50
 
-  // Hybrid routing: Ưu tiên NVIDIA NIM Direct nếu có apiKey và chưa vượt quá ngưỡng đồng thời
-  if (route === 'messages' && config.nvidiaApiKey && nvidiaInFlight < maxNvidia) {
-    nvidiaInFlight++
+  // The customer's own NVIDIA key if they have one, else the shared key. Every NVIDIA key has its own
+  // rate limit, so the concurrency cap is counted per key: a customer with their own key never uses
+  // up the shared key's slots, and the shared key's limit is only shared by those who use it.
+  let ownNvidiaKey = null
+  if (route === 'messages') {
+    try {
+      ownNvidiaKey = store.nvidiaKeyOf?.(record.id) ?? null
+    } catch (err) {
+      warn(log, `${label} could not read the customer's own NVIDIA key, using the shared one: ${err?.message ?? err}`)
+    }
+  }
+  const nvidiaApiKey = ownNvidiaKey || config.nvidiaApiKey
+  const nvidiaSlot = ownNvidiaKey ? `own:${record.id}` : 'shared'
+
+  // Hybrid routing: NVIDIA first when there is a key and its slots are not all taken, else revid.
+  if (route === 'messages' && nvidiaApiKey && (nvidiaInFlight.get(nvidiaSlot) ?? 0) < maxNvidia) {
+    nvidiaInFlight.set(nvidiaSlot, (nvidiaInFlight.get(nvidiaSlot) ?? 0) + 1)
     isNvidia = true
     const releaseNvidia = () => {
       if (isNvidia) {
         isNvidia = false
-        nvidiaInFlight = Math.max(0, nvidiaInFlight - 1)
+        const n = (nvidiaInFlight.get(nvidiaSlot) ?? 1) - 1
+        if (n > 0) nvidiaInFlight.set(nvidiaSlot, n)
+        else nvidiaInFlight.delete(nvidiaSlot)
       }
     }
 
@@ -437,7 +456,7 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
       const nvidiaPayload = anthropicToOpenAi(request, config.nvidiaModel)
       const nvidiaHeaders = {
         'content-type': 'application/json',
-        'authorization': `Bearer ${config.nvidiaApiKey}`,
+        'authorization': `Bearer ${nvidiaApiKey}`,
         'accept': request.stream ? 'text/event-stream' : 'application/json',
       }
 
@@ -502,7 +521,7 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
         release()
         return res.destroy()
       }
-      warn(log, `${label} NVIDIA failover to revid (${describeError(err)})`)
+      warn(log, `${label} NVIDIA failover to revid (${describeError(err)})${ownNvidiaKey ? ' [customer own NVIDIA key]' : ''}`)
       upstream = null
     }
   }

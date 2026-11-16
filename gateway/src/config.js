@@ -53,7 +53,7 @@ export function loadConfig(env = process.env, { requireAdminToken = true } = {})
     nvidiaApiKey: (env.NVIDIA_API_KEY ?? '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').trim(),
     nvidiaBaseUrl: (env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1').replace(/\/+$/, ''),
     nvidiaModel: env.NVIDIA_MODEL || 'nvidia/nemotron-3.5-super-vl-120b-a12b',
-    maxNvidiaConcurrent: Number(env.MAX_NVIDIA_CONCURRENT ?? 50), // Chịu tải đồng thời lên đến 50-100 req
+    maxNvidiaConcurrent: Number(env.MAX_NVIDIA_CONCURRENT ?? 50), // Số request chạy cùng lúc tối đa trên MỖI key NVIDIA (key chung, hoặc key riêng của từng khách); vượt thì sang revid
     nvidiaCreditDiscount: Number(env.NVIDIA_CREDIT_DISCOUNT ?? 0.3), // Giảm 70% chi phí credit khi chạy qua NVIDIA
     // Background poller pings the owner on Telegram when the shared revidapi balance drops below the threshold.
     telegramBotToken: (env.TELEGRAM_BOT_TOKEN ?? '').trim(),

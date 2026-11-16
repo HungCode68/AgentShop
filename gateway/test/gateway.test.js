@@ -1392,13 +1392,20 @@ describe('setup endpoint', () => {
 
 describe('NVIDIA route: Claude Code side requests', () => {
   /** Fake NVIDIA NIM (OpenAI-compatible): answers JSON or SSE depending on the request's "stream". */
-  async function withNvidia(fn, { mode } = {}) {
+  async function withNvidia(fn, { mode, extra = {} } = {}) {
     const seen = []
+    const auths = [] // the Authorization header of every request NVIDIA received
     const nim = createServer(async (req, res) => {
       const chunks = []
       for await (const c of req) chunks.push(c)
       const body = JSON.parse(Buffer.concat(chunks).toString())
       seen.push(body)
+      auths.push(req.headers.authorization)
+      if (mode === 'unauthorized') {
+        res.writeHead(401, { 'content-type': 'application/json' })
+        return res.end(JSON.stringify({ status: 401, title: 'Unauthorized', detail: 'Authentication failed' }))
+      }
+      if (mode === 'slow') await new Promise((r) => setTimeout(r, 300))
       if (mode === 'rate-limited') {
         res.writeHead(429, { 'content-type': 'application/json' })
         return res.end(JSON.stringify({ error: { message: 'Too Many Requests: slow down' } }))
@@ -1430,8 +1437,8 @@ describe('NVIDIA route: Claude Code side requests', () => {
     nim.listen(0)
     await once(nim, 'listening')
     try {
-      const extraConfig = { nvidiaApiKey: 'nvapi-test', nvidiaBaseUrl: `http://127.0.0.1:${nim.address().port}/v1`, nvidiaModel: 'nim-test' }
-      return await withGateway({ extraConfig }, (gwBase, lines) => fn(gwBase, lines, seen))
+      const extraConfig = { nvidiaApiKey: 'nvapi-test', nvidiaBaseUrl: `http://127.0.0.1:${nim.address().port}/v1`, nvidiaModel: 'nim-test', ...extra }
+      return await withGateway({ extraConfig }, (gwBase, lines) => fn(gwBase, lines, seen, auths))
     } finally {
       nim.close()
     }
@@ -1504,5 +1511,137 @@ describe('NVIDIA route: Claude Code side requests', () => {
       const line = (await res.text()).split('\n').find((l) => l.startsWith('data:') && l.includes('"message_start"'))
       assert.ok(JSON.parse(line.slice(5)).message.usage.input_tokens >= 1000)
     })
+  })
+
+  test('a customer with their own NVIDIA key is served with that key; the others use the shared one', async () => {
+    const own = store.create({ name: 'Own', plan: 'pro', nvidiaKey: 'nvapi-customer-own-key-0123456789' })
+    const shared = planKey('Shared')
+    await withNvidia(async (gwBase, lines, seen, auths) => {
+      await (await ask(gwBase, own.key)).text()
+      await (await ask(gwBase, shared.key)).text()
+      assert.deepEqual(auths, ['Bearer nvapi-customer-own-key-0123456789', 'Bearer nvapi-test'])
+      assert.equal(received.length, 0)
+    })
+  })
+
+  test('the NVIDIA slot limit counts per NVIDIA key: own keys do not use up the shared slots', async () => {
+    const a = store.create({ name: 'A', plan: 'pro', nvidiaKey: 'nvapi-key-of-customer-a-0000' })
+    const b = store.create({ name: 'B', plan: 'pro', nvidiaKey: 'nvapi-key-of-customer-b-0000' })
+    const c = planKey('C')
+    const d = planKey('D')
+    // One slot per NVIDIA key, and a slow NVIDIA so the requests overlap.
+    await withNvidia(
+      async (gwBase) => {
+        const own = await Promise.all([ask(gwBase, a.key), ask(gwBase, b.key)])
+        await Promise.all(own.map((r) => r.text()))
+        assert.equal(received.length, 0, 'two customers, two NVIDIA keys, both served by NVIDIA')
+
+        const sharedPair = await Promise.all([ask(gwBase, c.key), ask(gwBase, d.key)])
+        await Promise.all(sharedPair.map((r) => r.text()))
+        assert.equal(received.length, 1, 'two customers on the one shared key: the second overflows to revid')
+      },
+      { mode: 'slow', extra: { maxNvidiaConcurrent: 1 } },
+    )
+  })
+
+  describe('admin: test the NVIDIA connection', () => {
+    const post = (gwBase, body) =>
+      fetch(`${gwBase}/api/admin/nvidia-test`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${ADMIN_TOKEN}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then((r) => r.json())
+
+    test('tests a typed key, a saved key or the shared key, and never returns or logs a key', async () => {
+      const saved = store.create({ name: 'S', plan: 'pro', nvidiaKey: 'nvapi-saved-key-of-s-0000' })
+      await withNvidia(async (gwBase, lines, seen, auths) => {
+        const typed = await post(gwBase, { key: 'nvapi-typed-key-0000000' })
+        assert.equal(typed.ok, true)
+        assert.equal(typed.source, 'typed')
+        assert.equal(typed.model, 'nim-test')
+        assert.ok(typed.ms >= 0)
+        const fromSaved = await post(gwBase, { id: saved.record.id })
+        assert.equal(fromSaved.source, 'saved')
+        const shared = await post(gwBase, {})
+        assert.equal(shared.source, 'shared')
+        assert.deepEqual(auths, ['Bearer nvapi-typed-key-0000000', 'Bearer nvapi-saved-key-of-s-0000', 'Bearer nvapi-test'])
+        assert.ok(![typed, fromSaved, shared].some((r) => JSON.stringify(r).includes('nvapi-')), 'no key in any answer')
+        assert.ok(!lines.some((l) => l.includes('nvapi-')), 'no key in the log')
+      })
+    })
+
+    test('a customer without a saved key is tested with the shared key', async () => {
+      const plain = planKey('Plain')
+      await withNvidia(async (gwBase, lines, seen, auths) => {
+        const r = await post(gwBase, { id: plain.record.id })
+        assert.equal(r.source, 'shared')
+        assert.deepEqual(auths, ['Bearer nvapi-test'])
+      })
+    })
+
+    test('says in Vietnamese why it failed: wrong key, rate limit, no key at all', async () => {
+      await withNvidia(async (gwBase) => {
+        const r = await post(gwBase, { key: 'nvapi-wrong-key-0000000' })
+        assert.equal(r.ok, false)
+        assert.match(r.error, /không hợp lệ/)
+      }, { mode: 'unauthorized' })
+      await withNvidia(async (gwBase) => {
+        const r = await post(gwBase, { key: 'nvapi-busy-key-00000000' })
+        assert.equal(r.ok, false)
+        assert.match(r.error, /giới hạn tốc độ/)
+      }, { mode: 'rate-limited' })
+      await withNvidia(async (gwBase) => {
+        const r = await post(gwBase, {})
+        assert.equal(r.ok, false)
+        assert.match(r.error, /Chưa có key NVIDIA/)
+      }, { extra: { nvidiaApiKey: '' } })
+    })
+
+    test('needs the admin token', async () => {
+      await withNvidia(async (gwBase) => {
+        const res = await fetch(`${gwBase}/api/admin/nvidia-test`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+        assert.equal(res.status, 401)
+      })
+    })
+  })
+})
+
+describe('per-customer NVIDIA key', () => {
+  const RAW = 'nvapi-abcdef0123456789-secret-tail-WXYZ'
+
+  test('is stored encrypted, shown masked, and can be replaced or removed', () => {
+    const { record } = store.create({ name: 'N', plan: 'pro', nvidiaKey: RAW })
+    assert.equal(record.nvidiaKey, 'nvapi-…WXYZ')
+    assert.ok(!JSON.stringify(record).includes('secret-tail'))
+    assert.equal(store.nvidiaKeyOf(record.id), RAW)
+    const enc = db.prepare('SELECT nvidia_key_enc FROM api_keys WHERE id = ?').get(record.id).nvidia_key_enc
+    assert.ok(enc && !enc.includes('secret-tail'), 'encrypted at rest')
+
+    assert.equal(store.update(record.id, { nvidiaKey: 'nvapi-another-key-000000-ABCD' }).nvidiaKey, 'nvapi-…ABCD')
+    assert.equal(store.update(record.id, { note: 'x' }).nvidiaKey, 'nvapi-…ABCD', 'untouched when not in the patch')
+    assert.equal(store.update(record.id, { nvidiaKey: null }).nvidiaKey, null)
+    assert.equal(store.nvidiaKeyOf(record.id), null)
+  })
+
+  test('a customer without one has none', () => {
+    const { record } = planKey('None')
+    assert.equal(record.nvidiaKey, null)
+    assert.equal(store.nvidiaKeyOf(record.id), null)
+  })
+
+  test('rejects a key with spaces or one that is too short', () => {
+    assert.throws(() => store.create({ name: 'N', plan: 'pro', nvidiaKey: 'has space in it' }), /nvidiaKey/)
+    assert.throws(() => store.create({ name: 'N', plan: 'pro', nvidiaKey: 'short' }), /nvidiaKey/)
+  })
+
+  test('admin API: set on create, never returned in clear, cleared with null', async () => {
+    const res = await admin('/keys', { method: 'POST', body: JSON.stringify({ name: 'API', plan: 'pro', nvidiaKey: RAW }) })
+    const body = await res.json()
+    assert.equal(res.status, 201)
+    assert.equal(body.record.nvidiaKey, 'nvapi-…WXYZ')
+    assert.ok(!JSON.stringify(body).includes('secret-tail'))
+    assert.ok(!JSON.stringify(await (await admin('/keys')).json()).includes('secret-tail'), 'not in the list either')
+    const cleared = await (await admin(`/keys/${body.record.id}`, { method: 'PATCH', body: JSON.stringify({ nvidiaKey: null }) })).json()
+    assert.equal(cleared.nvidiaKey, null)
   })
 })

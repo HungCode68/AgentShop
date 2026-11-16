@@ -269,4 +269,48 @@ export function openAiToAnthropic(openAiRes, requestedModel) {
   }
 }
 
+/** Why a failed NVIDIA call failed, in words an admin can act on. The key is never part of it. */
+function explainFailure(status, body, model, apiKey) {
+  if (status === 401 || status === 403) return `Key NVIDIA không hợp lệ hoặc không có quyền dùng model này (HTTP ${status}).`
+  if (status === 404) return `Không tìm thấy model "${model}" cho key này (HTTP 404).`
+  if (status === 429) return 'Key NVIDIA đang bị giới hạn tốc độ (HTTP 429). Thử lại sau ít phút.'
+  if (status >= 500) return `NVIDIA đang gặp lỗi (HTTP ${status}). Thử lại sau.`
+  const detail = [body?.detail, body?.message, body?.error?.message].find((d) => typeof d === 'string') ?? ''
+  const clean = detail.split(apiKey).join('[key]').replace(/\s+/g, ' ').trim().slice(0, 140)
+  return `NVIDIA trả lỗi HTTP ${status}${clean ? `: ${clean}` : ''}.`
+}
+
+/**
+ * Sends one tiny question to NVIDIA with `apiKey` to see whether the key and the model work.
+ * Never throws and never puts the key in its answer.
+ * @returns {Promise<{ok: true, model: string, ms: number, reply: string} | {ok: false, status?: number, error: string}>}
+ */
+export async function probeNvidia({ baseUrl, model, apiKey, fetchImpl = fetch, timeoutMs = 20_000 }) {
+  const started = Date.now()
+  try {
+    const res = await fetchImpl(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}`, accept: 'application/json' },
+      body: JSON.stringify({ model, stream: false, max_tokens: 64, messages: [{ role: 'user', content: 'Reply with the single word: OK' }] }),
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    const ms = Date.now() - started
+    const text = await res.text()
+    let body = null
+    try {
+      body = JSON.parse(text)
+    } catch {
+      /* not JSON: the status decides */
+    }
+    if (res.ok && Array.isArray(body?.choices)) {
+      // A reasoning model may spend the whole budget thinking, so an empty reply is still a working connection.
+      return { ok: true, model, ms, reply: String(body.choices[0]?.message?.content ?? '').trim().slice(0, 40) }
+    }
+    return { ok: false, status: res.status, error: explainFailure(res.status, body, model, apiKey) }
+  } catch (err) {
+    const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError'
+    return { ok: false, error: timedOut ? `NVIDIA không trả lời trong ${Math.round(timeoutMs / 1000)} giây.` : `Không kết nối được tới NVIDIA (${err?.cause?.code ?? err?.message}).` }
+  }
+}
+
 export { relayOpenAiStreamToAnthropic } from './nvidia-stream.js'

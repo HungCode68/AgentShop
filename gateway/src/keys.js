@@ -11,7 +11,7 @@ export class StoreError extends Error {
 const nowIso = () => new Date().toISOString()
 const maskKey = (k) => (k.length <= 12 ? `${k.slice(0, 3)}…` : `${k.slice(0, 6)}…${k.slice(-4)}`)
 
-const PATCHABLE = new Set(['name', 'note', 'upstreamKey', 'expiresAt', 'status', 'plan', 'planMinutes', 'planTokenCap'])
+const PATCHABLE = new Set(['name', 'note', 'upstreamKey', 'nvidiaKey', 'expiresAt', 'status', 'plan', 'planMinutes', 'planTokenCap'])
 
 /** Old plan ids (session/week caps) → the credit pack that replaces them. */
 const PLAN_REMAP = { pro: 'pro', max5x: 'business', max20x: 'enterprise', trial: 'trial' }
@@ -69,6 +69,16 @@ function normUpstream(v) {
   return v.trim()
 }
 
+/** A customer's own NVIDIA key. undefined = leave unchanged, null = remove it (the shared key is used again). */
+function normNvidiaKey(v) {
+  if (v === undefined) return undefined
+  if (v === null || v === '') return null
+  if (typeof v !== 'string' || !/^\S{8,4096}$/.test(v.trim())) {
+    throw new StoreError(400, 'nvidiaKey must be a string without spaces (8-4096 characters)')
+  }
+  return v.trim()
+}
+
 /** undefined = leave unchanged, null = never expires. */
 function normExpiresAt(v) {
   if (v === undefined) return undefined
@@ -117,6 +127,8 @@ function toPublic(row) {
     keyPrefix: `${row.key_prefix}…`,
     canCopy: !!row.key_enc,
     upstreamKey: row.upstream_hint,
+    // Masked, like upstreamKey: the customer's own NVIDIA key is never shown in clear.
+    nvidiaKey: row.nvidia_hint ?? null,
     status: row.status,
     effectiveStatus: effectiveStatus(row),
     expiresAt: row.expires_at,
@@ -202,9 +214,10 @@ export class KeyStore {
     return toPublic(this.#row(id))
   }
 
-  create({ name, note, upstreamKey, expiresAt, plan, planMinutes, planTokenCap } = {}) {
+  create({ name, note, upstreamKey, nvidiaKey, expiresAt, plan, planMinutes, planTokenCap } = {}) {
     const n = normName(name)
     const up = normUpstream(upstreamKey) ?? null
+    const nv = normNvidiaKey(nvidiaKey) ?? null
     const p = normPlan(plan) ?? null
     const started = p ? this.#now() : null
     // The trial is limited in minutes; a paid pack has no time limit.
@@ -220,13 +233,14 @@ export class KeyStore {
       .prepare(
         `INSERT INTO api_keys
            (name, note, key_hash, key_prefix, key_enc, upstream_key_enc, upstream_fingerprint, upstream_hint, expires_at, created_at, updated_at,
-            plan, plan_days, plan_minutes, plan_token_cap, plan_started_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
+            plan, plan_days, plan_minutes, plan_token_cap, plan_started_at, nvidia_key_enc, nvidia_hint)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
       )
       .run(
         n, normNote(note), sha256(key), this.#displayPrefix(key), encrypt(key, this.#encKey),
         up ? encrypt(up, this.#encKey) : null, fp, up ? maskKey(up) : null, exp, ts, ts,
         p, minutes, normTokenCap(planTokenCap), started === null ? null : new Date(started).toISOString(),
+        nv ? encrypt(nv, this.#encKey) : null, nv ? maskKey(nv) : null,
       )
     return { key, record: this.get(Number(lastInsertRowid)) }
   }
@@ -256,6 +270,14 @@ export class KeyStore {
       set('upstream_key_enc', encrypt(up, this.#encKey))
       set('upstream_fingerprint', fp)
       set('upstream_hint', maskKey(up))
+    }
+    const nv = normNvidiaKey(patch.nvidiaKey)
+    if (nv === null) {
+      set('nvidia_key_enc', null)
+      set('nvidia_hint', null)
+    } else if (nv !== undefined) {
+      set('nvidia_key_enc', encrypt(nv, this.#encKey))
+      set('nvidia_hint', maskKey(nv))
     }
     const exp = normExpiresAt(patch.expiresAt)
     const p = normPlan(patch.plan)
@@ -333,6 +355,12 @@ export class KeyStore {
   upstreamKeyOf(id) {
     const row = this.#row(id)
     return row.upstream_key_enc ? decrypt(row.upstream_key_enc, this.#encKey) : null
+  }
+
+  /** The customer's own NVIDIA key in clear (for the proxy and the connection test), or null when they have none. */
+  nvidiaKeyOf(id) {
+    const row = this.#row(id)
+    return row.nvidia_key_enc ? decrypt(row.nvidia_key_enc, this.#encKey) : null
   }
 
   touch(id) {
