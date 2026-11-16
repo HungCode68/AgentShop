@@ -1392,13 +1392,22 @@ describe('setup endpoint', () => {
 
 describe('NVIDIA route: Claude Code side requests', () => {
   /** Fake NVIDIA NIM (OpenAI-compatible): answers JSON or SSE depending on the request's "stream". */
-  async function withNvidia(fn) {
+  async function withNvidia(fn, { mode } = {}) {
     const seen = []
     const nim = createServer(async (req, res) => {
       const chunks = []
       for await (const c of req) chunks.push(c)
       const body = JSON.parse(Buffer.concat(chunks).toString())
       seen.push(body)
+      if (mode === 'rate-limited') {
+        res.writeHead(429, { 'content-type': 'application/json' })
+        return res.end(JSON.stringify({ error: { message: 'Too Many Requests: slow down' } }))
+      }
+      if (mode === 'break' && body.stream) {
+        res.writeHead(200, { 'content-type': 'text/event-stream' })
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'part' } }] })}\n\n`)
+        return setTimeout(() => res.destroy(), 30)
+      }
       if (body.stream) {
         res.writeHead(200, { 'content-type': 'text/event-stream' })
         res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'hi' } }] })}\n\n`)
@@ -1457,6 +1466,43 @@ describe('NVIDIA route: Claude Code side requests', () => {
       assert.match(await res.text(), /message_stop/)
       assert.equal(seen[0].stream, true)
       assert.ok(!lines.some((l) => l.includes('[nvidia] side request')))
+    })
+  })
+
+  test('a provider connection that breaks mid-answer ends with an error event and is NOT sent again to revid', async () => {
+    const { key } = planKey()
+    await withNvidia(
+      async (gwBase) => {
+        const res = await ask(gwBase, key, { stream: true })
+        assert.equal(res.status, 200)
+        const text = await res.text()
+        assert.match(text, /event: error/)
+        assert.doesNotMatch(text, /message_stop/)
+        assert.equal(received.length, 0, 'no second, paid request to revid')
+      },
+      { mode: 'break' },
+    )
+  })
+
+  test('an NVIDIA error falls back to revid, and the log says why', async () => {
+    const { key } = planKey()
+    await withNvidia(
+      async (gwBase, lines) => {
+        const res = await ask(gwBase, key, { stream: true })
+        await res.text()
+        assert.equal(received.length, 1, 'answered by revid')
+        assert.ok(lines.some((l) => l.includes('NVIDIA failover to revid') && l.includes('429') && l.includes('slow down')), lines.join('\n'))
+      },
+      { mode: 'rate-limited' },
+    )
+  })
+
+  test('the streamed answer tells the client how big the conversation is (so it can auto-compact)', async () => {
+    const { key } = planKey()
+    await withNvidia(async (gwBase) => {
+      const res = await ask(gwBase, key, { stream: true, messages: [{ role: 'user', content: 'x'.repeat(4000) }] })
+      const line = (await res.text()).split('\n').find((l) => l.startsWith('data:') && l.includes('"message_start"'))
+      assert.ok(JSON.parse(line.slice(5)).message.usage.input_tokens >= 1000)
     })
   })
 })

@@ -234,6 +234,32 @@ async function* bodyChunks(first, reader) {
   }
 }
 
+/**
+ * The start of an error response's message, for the log: one short line, never more than 200 characters.
+ * Also gives the connection back, since the body of a failed attempt is not used.
+ */
+async function errorDetail(upstream) {
+  try {
+    let text = ''
+    for await (const c of bodyChunks(upstream.first, upstream.reader)) {
+      text += typeof c === 'string' ? c : Buffer.from(c).toString('utf8')
+      if (text.length > 400) break
+    }
+    upstream.abort()
+    let msg = text
+    try {
+      const j = JSON.parse(text)
+      msg = j?.error?.message ?? j?.message ?? j?.detail ?? text
+    } catch {
+      /* not JSON: the raw start of the body will do */
+    }
+    msg = (typeof msg === 'string' ? msg : JSON.stringify(msg)).replace(/\s+/g, ' ').trim().slice(0, 200)
+    return msg ? `: ${msg}` : ''
+  } catch {
+    return ''
+  }
+}
+
 async function pipeChunks(chunks, res) {
   for await (const chunk of chunks) {
     if (res.destroyed) return
@@ -425,7 +451,7 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
       })
 
       if (!upstream.res.ok) {
-        throw new Error(`NVIDIA HTTP ${upstream.res.status}`)
+        throw new Error(`NVIDIA HTTP ${upstream.res.status}${await errorDetail(upstream)}`)
       }
 
       chargedProvider = 'nvidia'
@@ -444,6 +470,8 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
         try {
           await relayOpenAiStreamToAnthropic(nChunks, res, {
             requestedModel: request.model,
+            // What the client sees as the conversation size (so Claude Code can auto-compact); billing is unaffected.
+            inputEstimate: estimateInputTokens(request) ?? 0,
             onUsage: charge,
           })
         } finally {
@@ -467,6 +495,13 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
       }
     } catch (err) {
       releaseNvidia()
+      if (res.headersSent) {
+        // Part of the answer is already with the client: sending the request again would only double the cost.
+        warn(log, `${label} NVIDIA answer broke after it had started: ${describeError(err)}`)
+        releaseReservation()
+        release()
+        return res.destroy()
+      }
       warn(log, `${label} NVIDIA failover to revid (${describeError(err)})`)
       upstream = null
     }

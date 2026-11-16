@@ -26,75 +26,7 @@ export function anthropicToOpenAi(request, targetModel = DEFAULT_NVIDIA_MODEL) {
   }
 
   // 2. Messages: convert user/assistant/tool messages
-  if (Array.isArray(request.messages)) {
-    for (const msg of request.messages) {
-      if (typeof msg.content === 'string') {
-        messages.push({ role: msg.role, content: msg.content })
-        continue
-      }
-
-      if (Array.isArray(msg.content)) {
-        // Check if there are tool_use or tool_result blocks
-        const toolResults = msg.content.filter((b) => b?.type === 'tool_result')
-        const toolUses = msg.content.filter((b) => b?.type === 'tool_use')
-        const textBlocks = msg.content.filter((b) => b?.type === 'text')
-        const imageBlocks = msg.content.filter((b) => b?.type === 'image')
-
-        // Case A: tool_result blocks (from client tool execution)
-        if (toolResults.length > 0) {
-          for (const tr of toolResults) {
-            let resContent = ''
-            if (typeof tr.content === 'string') {
-              resContent = tr.content
-            } else if (Array.isArray(tr.content)) {
-              resContent = tr.content.map((c) => (typeof c === 'string' ? c : c?.text || '')).join('\n')
-            }
-            messages.push({
-              role: 'tool',
-              tool_call_id: tr.tool_use_id,
-              content: resContent || 'Success',
-            })
-          }
-          continue
-        }
-
-        // Case B: assistant message containing tool_use blocks
-        if (msg.role === 'assistant' && toolUses.length > 0) {
-          const textContent = textBlocks.map((t) => t.text).join('\n')
-          const toolCalls = toolUses.map((tu) => ({
-            id: tu.id,
-            type: 'function',
-            function: {
-              name: tu.name,
-              arguments: typeof tu.input === 'string' ? tu.input : JSON.stringify(tu.input ?? {}),
-            },
-          }))
-          messages.push({
-            role: 'assistant',
-            content: textContent || null,
-            tool_calls: toolCalls,
-          })
-          continue
-        }
-
-        // Case C: multimodal content (text + images)
-        const parts = []
-        for (const part of msg.content) {
-          if (part.type === 'text') {
-            parts.push({ type: 'text', text: part.text })
-          } else if (part.type === 'image') {
-            const mediaType = part.source?.media_type || 'image/png'
-            const data = part.source?.data || ''
-            parts.push({
-              type: 'image_url',
-              image_url: { url: `data:${mediaType};base64,${data}` },
-            })
-          }
-        }
-        messages.push({ role: msg.role, content: parts.length > 0 ? parts : '' })
-      }
-    }
-  }
+  if (Array.isArray(request.messages)) convertMessages(request.messages, messages)
 
   // 3. Tools conversion
   let tools = undefined
@@ -154,6 +86,86 @@ export function anthropicToOpenAi(request, targetModel = DEFAULT_NVIDIA_MODEL) {
   }
 
   return payload
+}
+
+const textOf = (blocks) => blocks.filter((b) => b?.type === 'text').map((b) => b.text ?? '').join('\n')
+
+const imagePart = (b) => ({
+  type: 'image_url',
+  image_url: { url: b.source?.type === 'url' ? b.source.url : `data:${b.source?.media_type || 'image/png'};base64,${b.source?.data || ''}` },
+})
+
+/** A tool_result's text and images (its content is a string, or a list of blocks). */
+function toolResultParts(tr) {
+  if (typeof tr.content === 'string') return { text: tr.content, images: [] }
+  const blocks = Array.isArray(tr.content) ? tr.content : []
+  return {
+    text: blocks.map((c) => (typeof c === 'string' ? c : c?.type === 'image' ? '' : c?.text || '')).filter(Boolean).join('\n'),
+    images: blocks.filter((c) => c?.type === 'image').map(imagePart),
+  }
+}
+
+/**
+ * Anthropic messages → OpenAI messages, appended to `out`. What an agent loop depends on:
+ * every tool_result becomes a `tool` message; text and images that came with the results (a screenshot,
+ * a note from the user) are kept, as a user message right after, because `tool` messages carry text only.
+ */
+function convertMessages(src, out) {
+  for (const msg of src) {
+    if (typeof msg.content === 'string') {
+      out.push({ role: msg.role, content: msg.content })
+      continue
+    }
+    if (!Array.isArray(msg.content)) continue
+    const blocks = msg.content
+    const toolResults = blocks.filter((b) => b?.type === 'tool_result')
+    const toolUses = blocks.filter((b) => b?.type === 'tool_use')
+    const text = textOf(blocks)
+    const images = blocks.filter((b) => b?.type === 'image').map(imagePart)
+
+    if (toolResults.length > 0) {
+      const resultImages = []
+      for (const tr of toolResults) {
+        const { text: t, images: imgs } = toolResultParts(tr)
+        resultImages.push(...imgs)
+        let content = t || (imgs.length ? '(image attached in the next message)' : 'Success')
+        if (tr.is_error) content = /^error/i.test(t) ? t : `Error: ${t || 'the tool call failed'}`
+        out.push({ role: 'tool', tool_call_id: tr.tool_use_id, content })
+      }
+      const allImages = [...resultImages, ...images]
+      if (allImages.length) out.push({ role: 'user', content: [...(text ? [{ type: 'text', text }] : []), ...allImages] })
+      else if (text) out.push({ role: 'user', content: text })
+      continue
+    }
+
+    if (msg.role === 'assistant') {
+      if (toolUses.length > 0) {
+        out.push({
+          role: 'assistant',
+          content: text || null,
+          tool_calls: toolUses.map((tu) => ({
+            id: tu.id,
+            type: 'function',
+            function: { name: tu.name, arguments: typeof tu.input === 'string' ? tu.input : JSON.stringify(tu.input ?? {}) },
+          })),
+        })
+      } else if (text) {
+        out.push({ role: 'assistant', content: text }) // a thinking-only turn has nothing to send
+      }
+      continue
+    }
+
+    if (images.length) {
+      const parts = []
+      for (const b of blocks) {
+        if (b?.type === 'text') parts.push({ type: 'text', text: b.text })
+        else if (b?.type === 'image') parts.push(imagePart(b))
+      }
+      out.push({ role: msg.role, content: parts })
+    } else if (text) {
+      out.push({ role: msg.role, content: text })
+    }
+  }
 }
 
 /** Anthropic tool_choice → OpenAI tool_choice (undefined = leave the provider default). */
@@ -237,8 +249,8 @@ export function openAiToAnthropic(openAiRes, requestedModel) {
   }
 
   let stopReason = 'end_turn'
-  if (choice.finish_reason === 'tool_calls') stopReason = 'tool_use'
-  else if (choice.finish_reason === 'length') stopReason = 'max_tokens'
+  if (choice.finish_reason === 'length') stopReason = 'max_tokens'
+  else if (choice.finish_reason === 'tool_calls' || content.some((b) => b.type === 'tool_use')) stopReason = 'tool_use'
 
   return {
     id: openAiRes.id ? `msg_${openAiRes.id.replace(/^chatcmpl-/, '')}` : `msg_${Date.now()}`,
@@ -257,181 +269,4 @@ export function openAiToAnthropic(openAiRes, requestedModel) {
   }
 }
 
-/**
- * Streams an OpenAI SSE response chunk by chunk, converting events into Anthropic SSE format.
- */
-export async function relayOpenAiStreamToAnthropic(openAiChunks, res, { requestedModel, onUsage }) {
-  const msgId = `msg_nvidia_${Date.now()}`
-  let buffer = ''
-  let sentMessageStart = false
-  let sentContentBlockStart = false
-  let currentBlockType = null // 'thinking' | 'text' | 'tool_use'
-  let currentBlockIndex = 0
-  let currentToolId = null
-  let currentToolName = null
-  let totalInputTokens = 0
-  let totalOutputTokens = 0
-
-  const sendEvent = (event, data) => {
-    if (res.destroyed) return
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
-  }
-
-  // 1. Send initial message_start event
-  sendEvent('message_start', {
-    type: 'message_start',
-    message: {
-      id: msgId,
-      type: 'message',
-      role: 'assistant',
-      model: requestedModel,
-      content: [],
-      stop_reason: null,
-      stop_sequence: null,
-      usage: { input_tokens: 0, output_tokens: 0 },
-    },
-  })
-  sentMessageStart = true
-
-  const closeCurrentBlock = () => {
-    if (sentContentBlockStart) {
-      sendEvent('content_block_stop', {
-        type: 'content_block_stop',
-        index: currentBlockIndex,
-      })
-      sentContentBlockStart = false
-      currentBlockIndex++
-    }
-  }
-
-  for await (const rawChunk of openAiChunks) {
-    if (res.destroyed) break
-    const strChunk = rawChunk instanceof Uint8Array || Buffer.isBuffer(rawChunk)
-      ? Buffer.from(rawChunk).toString('utf8')
-      : String(rawChunk)
-    buffer += strChunk
-
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? '' // keep remainder
-
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed || !trimmed.startsWith('data:')) continue
-      const dataStr = trimmed.slice(5).trim()
-      if (dataStr === '[DONE]') continue
-
-      let chunk
-      try {
-        chunk = JSON.parse(dataStr)
-      } catch {
-        continue
-      }
-
-      if (chunk.usage) {
-        totalInputTokens = chunk.usage.prompt_tokens ?? totalInputTokens
-        totalOutputTokens = chunk.usage.completion_tokens ?? totalOutputTokens
-      }
-
-      const delta = chunk.choices?.[0]?.delta
-      if (!delta) continue
-
-      // Case 1: Reasoning content (thinking block)
-      if (delta.reasoning_content) {
-        if (!sentContentBlockStart || currentBlockType !== 'thinking') {
-          closeCurrentBlock()
-          currentBlockType = 'thinking'
-          sendEvent('content_block_start', {
-            type: 'content_block_start',
-            index: currentBlockIndex,
-            content_block: { type: 'thinking', thinking: '' },
-          })
-          sentContentBlockStart = true
-        }
-        sendEvent('content_block_delta', {
-          type: 'content_block_delta',
-          index: currentBlockIndex,
-          delta: { type: 'thinking_delta', thinking: delta.reasoning_content },
-        })
-        totalOutputTokens += 1
-      }
-
-      // Case 2: Regular text content
-      if (delta.content) {
-        if (!sentContentBlockStart || currentBlockType !== 'text') {
-          closeCurrentBlock()
-          currentBlockType = 'text'
-          sendEvent('content_block_start', {
-            type: 'content_block_start',
-            index: currentBlockIndex,
-            content_block: { type: 'text', text: '' },
-          })
-          sentContentBlockStart = true
-        }
-        sendEvent('content_block_delta', {
-          type: 'content_block_delta',
-          index: currentBlockIndex,
-          delta: { type: 'text_delta', text: delta.content },
-        })
-        totalOutputTokens += 1
-      }
-
-      // Case 3: Tool calls
-      if (Array.isArray(delta.tool_calls)) {
-        for (const tc of delta.tool_calls) {
-          if (tc.id || tc.function?.name) {
-            closeCurrentBlock()
-            currentBlockType = 'tool_use'
-            currentToolId = tc.id || `tool_${Date.now()}`
-            currentToolName = tc.function?.name || ''
-            sendEvent('content_block_start', {
-              type: 'content_block_start',
-              index: currentBlockIndex,
-              content_block: {
-                type: 'tool_use',
-                id: currentToolId,
-                name: currentToolName,
-                input: {},
-              },
-            })
-            sentContentBlockStart = true
-          }
-          if (tc.function?.arguments) {
-            sendEvent('content_block_delta', {
-              type: 'content_block_delta',
-              index: currentBlockIndex,
-              delta: {
-                type: 'input_json_delta',
-                partial_json: tc.function.arguments,
-              },
-            })
-            totalOutputTokens += 1
-          }
-        }
-      }
-    }
-  }
-
-  // Close any open block
-  closeCurrentBlock()
-
-  // Send message_delta with final stop_reason
-  sendEvent('message_delta', {
-    type: 'message_delta',
-    delta: { stop_reason: currentBlockType === 'tool_use' ? 'tool_use' : 'end_turn', stop_sequence: null },
-    usage: { output_tokens: totalOutputTokens },
-  })
-
-  // Send message_stop
-  sendEvent('message_stop', { type: 'message_stop' })
-
-  if (onUsage) {
-    onUsage({
-      input_tokens: totalInputTokens,
-      output_tokens: totalOutputTokens,
-      cache_read_input_tokens: 0,
-      cache_creation_input_tokens: 0,
-    })
-  }
-
-  res.end()
-}
+export { relayOpenAiStreamToAnthropic } from './nvidia-stream.js'
