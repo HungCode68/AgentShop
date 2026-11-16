@@ -1392,7 +1392,7 @@ describe('setup endpoint', () => {
 
 describe('NVIDIA route: Claude Code side requests', () => {
   /** Fake NVIDIA NIM (OpenAI-compatible): answers JSON or SSE depending on the request's "stream". */
-  async function withNvidia(fn, { mode, extra = {} } = {}) {
+  async function withNvidia(fn, { mode, extra = {}, decide } = {}) {
     const seen = []
     const auths = [] // the Authorization header of every request NVIDIA received
     const nim = createServer(async (req, res) => {
@@ -1401,6 +1401,13 @@ describe('NVIDIA route: Claude Code side requests', () => {
       const body = JSON.parse(Buffer.concat(chunks).toString())
       seen.push(body)
       auths.push(req.headers.authorization)
+      // decide({auth, body}) may answer instead: {status, body?, headers?}, or {hang: true} to never answer.
+      const decision = decide?.({ auth: req.headers.authorization, body })
+      if (decision?.hang) return
+      if (decision) {
+        res.writeHead(decision.status, { 'content-type': 'application/json', ...(decision.headers ?? {}) })
+        return res.end(JSON.stringify(decision.body ?? {}))
+      }
       if (mode === 'unauthorized') {
         res.writeHead(401, { 'content-type': 'application/json' })
         return res.end(JSON.stringify({ status: 401, title: 'Unauthorized', detail: 'Authentication failed' }))
@@ -1498,7 +1505,7 @@ describe('NVIDIA route: Claude Code side requests', () => {
         const res = await ask(gwBase, key, { stream: true })
         await res.text()
         assert.equal(received.length, 1, 'answered by revid')
-        assert.ok(lines.some((l) => l.includes('NVIDIA failover to revid') && l.includes('429') && l.includes('slow down')), lines.join('\n'))
+        assert.ok(lines.some((l) => l.includes('NVIDIA') && l.includes('429') && l.includes('slow down')), lines.join('\n'))
       },
       { mode: 'rate-limited' },
     )
@@ -1542,6 +1549,152 @@ describe('NVIDIA route: Claude Code side requests', () => {
       },
       { mode: 'slow', extra: { maxNvidiaConcurrent: 1 } },
     )
+  })
+
+  describe('several NVIDIA models, chosen by task', () => {
+    const tiers = { nvidiaModels: { opus: 'm-ultra', sonnet: 'm-super', haiku: 'm-light' }, nvidiaVisionModels: ['m-super', 'm-omni'] }
+    const customTool = { name: 'Bash', description: 'run a command', input_schema: { type: 'object', properties: { command: { type: 'string' } } } }
+    const models = (seen) => seen.map((b) => b.model)
+
+    test('the Claude model the customer picks decides the NVIDIA model', async () => {
+      const { key } = planKey()
+      await withNvidia(
+        async (gwBase, lines, seen) => {
+          const served = []
+          for (const model of ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']) {
+            const r = await ask(gwBase, key, { model })
+            await r.text()
+            served.push(r.headers.get('x-served-by'))
+          }
+          assert.deepEqual(models(seen), ['m-light', 'm-super', 'm-ultra'])
+          assert.deepEqual(served, ['m-light', 'm-super', 'm-ultra'], 'the answer says which model served it')
+          assert.equal(received.length, 0)
+        },
+        { extra: tiers },
+      )
+    })
+
+    test('a rate-limited model rests: the next NVIDIA model serves, and later requests go straight to it', async () => {
+      const { key } = planKey()
+      await withNvidia(
+        async (gwBase, lines, seen) => {
+          const a = await ask(gwBase, key, { model: 'claude-opus-5-5' })
+          await a.text()
+          assert.equal(a.status, 200)
+          assert.deepEqual(models(seen), ['m-ultra', 'm-super'], 'ultra said 429, super served')
+          await (await ask(gwBase, key, { model: 'claude-opus-5-5' })).text()
+          assert.deepEqual(models(seen), ['m-ultra', 'm-super', 'm-super'], 'ultra is resting: no new attempt on it')
+          assert.equal(received.length, 0, 'revid was never needed')
+          assert.ok(lines.some((l) => l.includes('m-ultra') && l.includes('429') && /resting/.test(l)), lines.join('\n'))
+        },
+        { extra: tiers, decide: ({ body }) => (body.model === 'm-ultra' ? { status: 429, body: { error: { message: 'slow down' } } } : null) },
+      )
+    })
+
+    test('when every NVIDIA model fails, revid answers (after three attempts at most), and the resting models are not hammered', async () => {
+      const { key } = planKey()
+      await withNvidia(
+        async (gwBase, lines, seen) => {
+          const a = await ask(gwBase, key, { model: 'claude-opus-5-5' })
+          await a.text()
+          assert.equal(a.status, 200)
+          assert.deepEqual(models(seen), ['m-ultra', 'm-super', 'm-light'])
+          assert.equal(received.length, 1, 'revid answered')
+          await (await ask(gwBase, key, { model: 'claude-opus-5-5' })).text()
+          assert.equal(seen.length, 3, 'all three are resting: straight to revid')
+          assert.equal(received.length, 2)
+        },
+        { extra: tiers, decide: () => ({ status: 429 }) },
+      )
+    })
+
+    test('a model that never answers is given up on after the first-byte timeout', async () => {
+      const { key } = planKey()
+      await withNvidia(
+        async (gwBase, lines, seen) => {
+          const t0 = Date.now()
+          const res = await ask(gwBase, key, { model: 'claude-opus-5-5' })
+          await res.text()
+          assert.equal(res.status, 200)
+          assert.deepEqual(models(seen), ['m-ultra', 'm-super'])
+          assert.ok(Date.now() - t0 < 3000, 'did not wait for the hung model')
+          assert.equal(received.length, 0)
+        },
+        { extra: { ...tiers, nvidiaFirstByteTimeoutMs: 150 }, decide: ({ body }) => (body.model === 'm-ultra' ? { hang: true } : null) },
+      )
+    })
+
+    test('a request with an image goes to a model that sees images', async () => {
+      const { key } = planKey()
+      const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }
+      await withNvidia(
+        async (gwBase, lines, seen) => {
+          await (await ask(gwBase, key, { model: 'claude-opus-5-5', messages: [{ role: 'user', content: [{ type: 'text', text: 'what is this?' }, image] }] })).text()
+          assert.deepEqual(models(seen), ['m-super'], 'opus would be m-ultra, which cannot see')
+        },
+        { extra: tiers },
+      )
+    })
+
+    test('a request that only asks for a server tool (web search) goes to revid; next to normal tools the tool is dropped', async () => {
+      const { key } = planKey()
+      await withNvidia(
+        async (gwBase, lines, seen) => {
+          await (await ask(gwBase, key, { tools: [{ type: 'web_search_20250305', name: 'web_search' }] })).text()
+          assert.equal(seen.length, 0, 'NVIDIA cannot run Anthropic\'s web search')
+          assert.equal(received.length, 1)
+          await (await ask(gwBase, key, { tools: [customTool, { type: 'web_search_20250305', name: 'web_search' }] })).text()
+          assert.deepEqual(seen[0].tools.map((t) => t.function.name), ['Bash'])
+        },
+        { extra: tiers },
+      )
+    })
+
+    test('a pool of shared keys is used in turn, and a key that gets 429 rests while the others carry on', async () => {
+      const { key } = planKey()
+      const pool = { nvidiaApiKeys: ['nvapi-pool-a', 'nvapi-pool-b'], nvidiaApiKey: 'nvapi-pool-a' }
+      await withNvidia(
+        async (gwBase, lines, seen, auths) => {
+          for (let i = 0; i < 4; i++) await (await ask(gwBase, key)).text()
+          assert.deepEqual(auths, ['Bearer nvapi-pool-a', 'Bearer nvapi-pool-b', 'Bearer nvapi-pool-a', 'Bearer nvapi-pool-b'])
+        },
+        { extra: pool },
+      )
+      await withNvidia(
+        async (gwBase, lines, seen, auths) => {
+          for (let i = 0; i < 4; i++) {
+            const r = await ask(gwBase, key)
+            await r.text()
+            assert.equal(r.status, 200)
+          }
+          assert.equal(auths.filter((a) => a === 'Bearer nvapi-pool-a').length, 1, 'tried once, then left to rest')
+          assert.equal(received.length, 0, 'revid never needed')
+        },
+        { extra: pool, decide: ({ auth }) => (auth === 'Bearer nvapi-pool-a' ? { status: 429 } : null) },
+      )
+    })
+
+    test('too many requests at once on the whole server: the extra one is told to retry, and nothing is wasted on it', async () => {
+      const { key } = planKey()
+      await withNvidia(
+        async (gwBase, lines, seen) => {
+          const first = ask(gwBase, key)
+          await new Promise((r) => setTimeout(r, 100))
+          const second = await ask(gwBase, key)
+          assert.equal(second.status, 429)
+          assert.ok(second.headers.get('retry-after'))
+          assert.equal((await second.json()).error.type, 'rate_limit_error')
+          const done = await first
+          assert.equal(done.status, 200)
+          await done.text()
+          const third = await ask(gwBase, key)
+          assert.equal(third.status, 200, 'the room is free again')
+          await third.text()
+          assert.equal(seen.length, 2, 'the refused request never reached NVIDIA')
+        },
+        { mode: 'slow', extra: { maxTotalConcurrent: 1 } },
+      )
+    })
   })
 
   describe('admin: test the NVIDIA connection', () => {
@@ -1595,6 +1748,24 @@ describe('NVIDIA route: Claude Code side requests', () => {
         assert.equal(r.ok, false)
         assert.match(r.error, /Chưa có key NVIDIA/)
       }, { extra: { nvidiaApiKey: '' } })
+    })
+
+    test('with several models it tests each one and says which fail', async () => {
+      const tiers = { nvidiaModels: { opus: 'm-ultra', sonnet: 'm-super', haiku: 'm-light' }, nvidiaVisionModels: ['m-super', 'm-omni'] }
+      await withNvidia(
+        async (gwBase, lines, seen) => {
+          const r = await post(gwBase, { key: 'nvapi-typed-key-0000000' })
+          assert.equal(r.ok, false, 'one model failing makes the whole test fail')
+          assert.deepEqual(
+            r.models.map((m) => [m.model, m.ok]),
+            [['m-ultra', true], ['m-super', true], ['m-light', false], ['m-omni', true]],
+          )
+          assert.match(r.error, /m-light.*giới hạn tốc độ/)
+          assert.equal(seen.length, 4, 'one tiny request per distinct model')
+          assert.ok(!JSON.stringify(r).includes('nvapi-'))
+        },
+        { extra: tiers, decide: ({ body }) => (body.model === 'm-light' ? { status: 429 } : null) },
+      )
     })
 
     test('needs the admin token', async () => {

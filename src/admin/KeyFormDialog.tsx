@@ -253,11 +253,20 @@ export function KeyFormDialog({ record, trialTokenCap, onTestNvidia, onSubmit, o
             )}
           </div>
           {nvidiaTest && (
-            <span className={`field__hint nv-test nv-test--${nvidiaTest.ok ? 'ok' : 'fail'}`} role="status">
+            <div className={`field__hint nv-test nv-test--${nvidiaTest.ok ? 'ok' : 'fail'}`} role="status">
               {nvidiaTest.ok
-                ? `Kết nối được · model ${nvidiaTest.model} · ${nvidiaTest.ms} ms · đã thử bằng ${NV_SOURCE[nvidiaTest.source]}.`
+                ? `Kết nối được${nvidiaTest.models && nvidiaTest.models.length > 1 ? ` cả ${nvidiaTest.models.length} model` : ` · model ${nvidiaTest.model} · ${nvidiaTest.ms} ms`} · đã thử bằng ${NV_SOURCE[nvidiaTest.source]}.`
                 : `${nvidiaTest.error}${nvidiaTest.source ? ` (đã thử bằng ${NV_SOURCE[nvidiaTest.source]})` : ''}`}
-            </span>
+              {nvidiaTest.models && nvidiaTest.models.length > 1 && (
+                <ul className="nv-models">
+                  {nvidiaTest.models.map((m) => (
+                    <li key={m.model} className={m.ok ? 'nv-test--ok' : 'nv-test--fail'}>
+                      {m.ok ? '✓' : '✗'} {m.model.split('/').pop()} — {m.ok ? `${m.ms} ms` : m.error}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
           <span className="field__hint">
             Để trống thì khách dùng key NVIDIA chung của hệ thống. Mỗi key NVIDIA có giới hạn tốc độ riêng, nên khách dùng nhiều nên có key riêng. Nút kiểm tra thử key vừa nhập, nếu để trống thì thử key đã lưu hoặc key chung.

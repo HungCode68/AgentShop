@@ -145,6 +145,9 @@ export async function relayOpenAiStreamToAnthropic(openAiChunks, res, { requeste
       // A streaming decoder: a multi-byte character (Vietnamese!) split across two network chunks stays whole.
       buffer += (typeof raw === 'string' ? raw : decoder.decode(raw, { stream: true })).replace(/\r\n/g, '\n')
       drainLines()
+      // A client that cannot keep up: stop reading from NVIDIA until it has caught up, so many slow
+      // connections cannot pile up unsent text in memory.
+      if (res.writableNeedDrain) await new Promise((resolve) => res.once('drain', resolve).once('close', resolve))
     }
     buffer += decoder.decode().replace(/\r\n/g, '\n')
     drainLines()

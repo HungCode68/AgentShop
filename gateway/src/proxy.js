@@ -3,7 +3,8 @@ import { ALLOWED_MODELS, convertedTokens, creditsForUsage, MODEL_RATES, normaliz
 import { estimateRequestCredits } from './quota.js'
 import { fillInputTokens, looksTruncated, relayMessageStream } from './sse.js'
 import { estimateInputTokens } from './tokens.js'
-import { anthropicToOpenAi, openAiToAnthropic, relayOpenAiStreamToAnthropic, requestShape } from './nvidia.js'
+import { anthropicToOpenAi, hasImages, onlyServerTools, openAiToAnthropic, relayOpenAiStreamToAnthropic, requestShape } from './nvidia.js'
+import { modelChain, NvidiaRouter, parseRetryAfter } from './nvidia-router.js'
 
 /** Why a client key was rejected → [HTTP status, Anthropic error type, message]. */
 const REJECTIONS = {
@@ -154,11 +155,26 @@ const fmtCredits = (n) => (n >= 1e6 ? `${(n / 1e6).toLocaleString('vi-VN', { max
 /** Requests currently running per key id (to cap concurrency). */
 const inFlight = new Map()
 
+/** How many NVIDIA models/keys one request may try before it is sent to revid. */
+const NVIDIA_MAX_ATTEMPTS = 3
+
 /**
- * Requests currently running on NVIDIA, per NVIDIA key: "shared" for the gateway's own key, "own:<id>" for a
- * customer's key. Each is capped at MAX_NVIDIA_CONCURRENT; beyond that a request goes to revid instead.
+ * State of one gateway (one config = one gateway): which NVIDIA models and keys are busy or resting, and how
+ * many AI requests run in total.
  */
-const nvidiaInFlight = new Map()
+const gatewayState = new WeakMap()
+function stateOf(config) {
+  let s = gatewayState.get(config)
+  if (!s) {
+    // MAX_NVIDIA_CONCURRENT is the number of requests at once per NVIDIA key and model.
+    s = { router: new NvidiaRouter({ maxPerLane: config.maxNvidiaConcurrent ?? 50 }), total: 0 }
+    gatewayState.set(config, s)
+  }
+  return s
+}
+
+/** The shared NVIDIA keys (a pool, or the one key), as lanes the router can rotate through. */
+const sharedLanes = (config) => (config.nvidiaApiKeys ?? [config.nvidiaApiKey]).filter(Boolean).map((key, i) => ({ id: `shared:${i}`, key }))
 
 /* ------------------------------------------------------------------ upstream */
 
@@ -168,7 +184,7 @@ const nvidiaInFlight = new Map()
  * (revidapi sometimes stalls ~60s); the slower one is cancelled. A connection that could not be opened is
  * retried once. At most two attempts in total.
  */
-function openUpstream({ target, init, hedgeAfterMs, fetchImpl, clientSignal, onWarn }) {
+function openUpstream({ target, init, hedgeAfterMs, fetchImpl, clientSignal, onWarn, firstByteTimeoutMs = 0 }) {
   return new Promise((resolve, reject) => {
     const attempts = []
     let settled = false
@@ -190,10 +206,19 @@ function openUpstream({ target, init, hedgeAfterMs, fetchImpl, clientSignal, onW
       else clientSignal.addEventListener('abort', () => attempt.ac.abort(), { once: true })
 
       ;(async () => {
-        const res = await fetchImpl(target, { ...init, signal: attempt.ac.signal, redirect: 'manual' })
-        const reader = res.body ? res.body.getReader() : null
-        const first = reader ? await reader.read() : { done: true }
-        return { res, reader, first: first.done ? null : first.value, ended: first.done }
+        // A provider that never answers (a queue at a free tier) must not hold the customer forever.
+        const timer =
+          firstByteTimeoutMs > 0
+            ? setTimeout(() => attempt.ac.abort(Object.assign(new Error(`no answer within ${firstByteTimeoutMs}ms`), { name: 'TimeoutError' })), firstByteTimeoutMs)
+            : null
+        try {
+          const res = await fetchImpl(target, { ...init, signal: attempt.ac.signal, redirect: 'manual' })
+          const reader = res.body ? res.body.getReader() : null
+          const first = reader ? await reader.read() : { done: true }
+          return { res, reader, first: first.done ? null : first.value, ended: first.done }
+        } finally {
+          clearTimeout(timer)
+        }
       })().then(
         (v) => {
           if (settled) {
@@ -298,6 +323,19 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
   }
   if (req.method !== 'POST') return anthropicError(res, 405, 'invalid_request_error', 'Method not allowed')
 
+  // Protects a small server: past this many AI requests at once the extra one is told to retry, before its
+  // body is even read. Claude Code retries a 429 by itself.
+  if (route === 'messages') {
+    const gw = stateOf(config)
+    if (config.maxTotalConcurrent > 0 && gw.total >= config.maxTotalConcurrent) {
+      return anthropicError(res, 429, 'rate_limit_error', 'Hệ thống đang xử lý nhiều yêu cầu cùng lúc. Vui lòng thử lại sau vài giây.', { 'retry-after': '3' })
+    }
+    gw.total++
+    res.once('close', () => {
+      gw.total--
+    })
+  }
+
   const body = await readBody(req, config.maxBodyBytes)
   let request
   try {
@@ -319,6 +357,8 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
   if (!MODEL_RATES[model]) {
     return anthropicError(res, 400, 'invalid_request_error', `Model "${request.model}" is not available. Available models: ${ALLOWED_MODELS.join(', ')}`)
   }
+  // Counted once per request (it walks the whole conversation) and used for the credit reserve and for what the client is told.
+  const inputEstimate = estimateInputTokens(request)
 
   // The credit reservation this request holds. It is settled exactly once: by charge() when the
   // answer arrives (real cost charged, reservation released), or by releaseReservation() when it
@@ -362,7 +402,7 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
     // account past the pack that was bought for this customer.
     const estimate = estimateRequestCredits({
       model: request.model,
-      inputTokens: estimateInputTokens(request) ?? 0,
+      inputTokens: inputEstimate ?? 0,
       maxTokens: Number.isFinite(request.max_tokens) ? request.max_tokens : 0,
     })
     const held = quota.reserve(record, estimate)
@@ -414,70 +454,51 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
   })
 
   let upstream
-  let isNvidia = false
-  const maxNvidia = config.maxNvidiaConcurrent ?? 50
 
-  // The customer's own NVIDIA key if they have one, else the shared key. Every NVIDIA key has its own
-  // rate limit, so the concurrency cap is counted per key: a customer with their own key never uses
-  // up the shared key's slots, and the shared key's limit is only shared by those who use it.
-  let ownNvidiaKey = null
-  if (route === 'messages') {
-    try {
-      ownNvidiaKey = store.nvidiaKeyOf?.(record.id) ?? null
-    } catch (err) {
-      warn(log, `${label} could not read the customer's own NVIDIA key, using the shared one: ${err?.message ?? err}`)
-    }
+  // Which NVIDIA models and keys may serve this request, and in which order. The Claude model the customer
+  // picked chooses the model (Claude Code's own side requests use Haiku, so they land on the fast one).
+  const gw = stateOf(config)
+  const wantsNvidia = route === 'messages' && !onlyServerTools(request)
+  if (route === 'messages' && !wantsNvidia) {
+    log?.(`${new Date().toISOString()} INFO ${label} [nvidia] skipped: the request only asks for tools that run on Anthropic's servers (${request.tools.map((t) => t.type ?? t.name).join(', ')}), sent to revid`)
   }
-  const nvidiaApiKey = ownNvidiaKey || config.nvidiaApiKey
-  const nvidiaSlot = ownNvidiaKey ? `own:${record.id}` : 'shared'
 
-  // Hybrid routing: NVIDIA first when there is a key and its slots are not all taken, else revid.
-  if (route === 'messages' && nvidiaApiKey && (nvidiaInFlight.get(nvidiaSlot) ?? 0) < maxNvidia) {
-    nvidiaInFlight.set(nvidiaSlot, (nvidiaInFlight.get(nvidiaSlot) ?? 0) + 1)
-    isNvidia = true
-    const releaseNvidia = () => {
-      if (isNvidia) {
-        isNvidia = false
-        const n = (nvidiaInFlight.get(nvidiaSlot) ?? 1) - 1
-        if (n > 0) nvidiaInFlight.set(nvidiaSlot, n)
-        else nvidiaInFlight.delete(nvidiaSlot)
-      }
-    }
-
-    // Chat turns stream; anything else (non-streamed, forced tool, JSON output) is a Claude Code
-    // side request such as auto mode's safety check. Log its shape (never its content) so one that
-    // misbehaves on NVIDIA can be identified.
-    if (request.stream !== true || request.tool_choice || request.output_config?.format || request.output_format) {
-      log?.(`${new Date().toISOString()} INFO ${label} [nvidia] side request ${requestShape(request)}`)
-    }
-
+  /**
+   * Tries one NVIDIA model on one key. Returns true when the request is finished (answered, or broken after
+   * the answer had started), false when this attempt failed before any answer, so the next one can be tried.
+   */
+  const serveFromNvidia = async (attempt) => {
+    const where = `${attempt.model.split('/').pop()} on ${attempt.lane.id}`
     try {
-      const nvidiaTarget = `${config.nvidiaBaseUrl}/chat/completions`
-      const nvidiaPayload = anthropicToOpenAi(request, config.nvidiaModel)
-      const nvidiaHeaders = {
-        'content-type': 'application/json',
-        'authorization': `Bearer ${nvidiaApiKey}`,
-        'accept': request.stream ? 'text/event-stream' : 'application/json',
-      }
-
-      upstream = await openUpstream({
-        target: nvidiaTarget,
-        init: { method: 'POST', headers: nvidiaHeaders, body: JSON.stringify(nvidiaPayload) },
+      const up = await openUpstream({
+        target: `${config.nvidiaBaseUrl}/chat/completions`,
+        init: {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${attempt.lane.key}`,
+            accept: request.stream ? 'text/event-stream' : 'application/json',
+          },
+          body: JSON.stringify(anthropicToOpenAi(request, attempt.model)),
+        },
         hedgeAfterMs: 0,
         fetchImpl,
         clientSignal: clientAbort.signal,
+        firstByteTimeoutMs: config.nvidiaFirstByteTimeoutMs ?? 60_000,
         onWarn: (msg) => warn(log, `${label} [nvidia] ${msg}`),
       })
-
-      if (!upstream.res.ok) {
-        throw new Error(`NVIDIA HTTP ${upstream.res.status}${await errorDetail(upstream)}`)
+      if (!up.res.ok) {
+        throw Object.assign(new Error(`NVIDIA HTTP ${up.res.status}${await errorDetail(up)}`), {
+          status: up.res.status,
+          retryAfterMs: parseRetryAfter(up.res.headers.get('retry-after')),
+        })
       }
 
+      // It answers: from here on the request is NVIDIA's.
+      gw.router.success(attempt)
       chargedProvider = 'nvidia'
-      res.once('close', releaseNvidia)
-
-      // Direct handle for NVIDIA response conversion (OpenAI -> Anthropic)
-      const nChunks = bodyChunks(upstream.first, upstream.reader)
+      res.once('close', attempt.release)
+      const nChunks = bodyChunks(up.first, up.reader)
 
       // Answer in the form the client asked for: SSE only when it asked to stream.
       if (request.stream === true) {
@@ -485,44 +506,77 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
           'content-type': 'text/event-stream; charset=utf-8',
           'cache-control': 'no-cache',
           'connection': 'keep-alive',
+          'x-served-by': attempt.model,
         })
         try {
           await relayOpenAiStreamToAnthropic(nChunks, res, {
             requestedModel: request.model,
             // What the client sees as the conversation size (so Claude Code can auto-compact); billing is unaffected.
-            inputEstimate: estimateInputTokens(request) ?? 0,
+            inputEstimate: inputEstimate ?? 0,
             onUsage: charge,
           })
         } finally {
           releaseReservation()
           release()
         }
-        return
-      } else {
-        try {
-          const parts = []
-          for await (const c of nChunks) parts.push(Buffer.from(c))
-          const jsonText = Buffer.concat(parts).toString('utf8')
-          const openAiRes = JSON.parse(jsonText)
-          const anthropicRes = openAiToAnthropic(openAiRes, request.model)
-          charge(anthropicRes.usage)
-          return sendJson(res, 200, anthropicRes)
-        } finally {
-          releaseReservation()
-          release()
-        }
+        return true
       }
+      // Not streamed: nothing is settled until the whole answer is converted, so an unreadable one can still go elsewhere.
+      const parts = []
+      for await (const c of nChunks) parts.push(Buffer.from(c))
+      const anthropicRes = openAiToAnthropic(JSON.parse(Buffer.concat(parts).toString('utf8')), request.model)
+      charge(anthropicRes.usage)
+      releaseReservation()
+      release()
+      sendJson(res, 200, anthropicRes, { 'x-served-by': attempt.model })
+      return true
     } catch (err) {
-      releaseNvidia()
-      if (res.headersSent) {
-        // Part of the answer is already with the client: sending the request again would only double the cost.
-        warn(log, `${label} NVIDIA answer broke after it had started: ${describeError(err)}`)
+      attempt.release()
+      if (clientAbort.signal.aborted) {
+        // The customer left: nothing wrong with NVIDIA, and nobody to answer.
         releaseReservation()
         release()
-        return res.destroy()
+        return true
       }
-      warn(log, `${label} NVIDIA failover to revid (${describeError(err)})${ownNvidiaKey ? ' [customer own NVIDIA key]' : ''}`)
-      upstream = null
+      if (res.headersSent) {
+        // Part of the answer is already with the client: sending the request again would only double the cost.
+        warn(log, `${label} NVIDIA answer broke after it had started (${where}): ${describeError(err)}`)
+        releaseReservation()
+        release()
+        res.destroy()
+        return true
+      }
+      const { waitMs } = gw.router.failure(attempt, { status: err.status ?? 0, retryAfterMs: err.retryAfterMs })
+      warn(log, `${label} NVIDIA failover: ${where} failed (${describeError(err)})${waitMs ? `, resting ${Math.round(waitMs / 1000)}s` : ''}${attempt.lane.id.startsWith('own:') ? ' [customer own NVIDIA key]' : ''}`)
+      return false
+    }
+  }
+
+  if (wantsNvidia) {
+    // The customer's own NVIDIA key if they have one (its own rate limit, no one else's slots), else the shared pool in turn.
+    let ownKey = null
+    try {
+      ownKey = store.nvidiaKeyOf?.(record.id) ?? null
+    } catch (err) {
+      warn(log, `${label} could not read the customer's own NVIDIA key, using the shared ones: ${err?.message ?? err}`)
+    }
+    const lanes = ownKey ? [{ id: `own:${record.id}`, key: ownKey }] : gw.router.rotate(sharedLanes(config))
+    const chain = modelChain(config, request.model, hasImages(request))
+    if (lanes.length && chain.length) {
+      // Chat turns stream; anything else (non-streamed, forced tool, JSON output) is a Claude Code side request
+      // such as auto mode's safety check. Log its shape (never its content) so one that misbehaves can be identified.
+      if (request.stream !== true || request.tool_choice || request.output_config?.format || request.output_format) {
+        log?.(`${new Date().toISOString()} INFO ${label} [nvidia] side request ${requestShape(request)}`)
+      }
+      const tried = new Set()
+      for (let n = 0; n < NVIDIA_MAX_ATTEMPTS; n++) {
+        const attempt = gw.router.acquire(chain, lanes, tried)
+        if (!attempt) break
+        tried.add(attempt.key)
+        if (await serveFromNvidia(attempt)) return
+      }
+      if (tried.size > 0) warn(log, `${label} NVIDIA gave no answer after ${tried.size} attempt${tried.size > 1 ? 's' : ''}, sending to revid`)
+      else log?.(`${new Date().toISOString()} INFO ${label} [nvidia] every model is resting or full, sending to revid`)
     }
   }
 
@@ -559,7 +613,7 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
       res.writeHead(upstream.res.status, outHeaders)
       await relayMessageStream(chunks, res, {
         requestedMax: Number.isFinite(request.max_tokens) ? request.max_tokens : undefined,
-        inputEstimate: estimateInputTokens(request),
+        inputEstimate,
         pingMs: config.streamPingMs,
         warn: (msg) => warn(log, `${label} ${msg}`),
         onUsage: charge,
@@ -575,7 +629,7 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
       let out = text
       try {
         const msg = JSON.parse(text)
-        let changed = fillInputTokens(msg.usage, estimateInputTokens(request))
+        let changed = fillInputTokens(msg.usage, inputEstimate)
         if (looksTruncated(msg.stop_reason, msg.usage?.output_tokens, request.max_tokens)) {
           warn(log, `${label} answer cut at the upstream's output limit (${msg.usage.output_tokens} tokens) but labelled end_turn; sent max_tokens`)
           msg.stop_reason = 'max_tokens'

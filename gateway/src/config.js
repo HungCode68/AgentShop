@@ -34,6 +34,25 @@ export function loadConfig(env = process.env, { requireAdminToken = true } = {})
   const maxConcurrentPerKey = Number(env.MAX_CONCURRENT_PER_KEY ?? 12)
   if (!Number.isInteger(maxConcurrentPerKey) || maxConcurrentPerKey < 0) errors.push('MAX_CONCURRENT_PER_KEY không hợp lệ (0 = không giới hạn)')
 
+  // NVIDIA: a pool of shared keys (NVIDIA_API_KEYS, comma separated) or the single NVIDIA_API_KEY. An empty key switches NVIDIA off.
+  const nvidiaKeys = (() => {
+    const pool = (env.NVIDIA_API_KEYS ?? '').split(',').map((k) => k.trim()).filter(Boolean)
+    if (pool.length) return [...new Set(pool)]
+    const single = (env.NVIDIA_API_KEY ?? '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').trim()
+    return single ? [single] : []
+  })()
+  // One NVIDIA model per Claude tier (each model has its own rate limit at NVIDIA); NVIDIA_MODEL is the Sonnet one.
+  const list = (v, fallback) => (v ?? fallback).split(',').map((x) => x.trim()).filter(Boolean)
+  const nvidiaModels = {
+    opus: env.NVIDIA_MODEL_OPUS || 'nvidia/nemotron-3-ultra-550b-a55b',
+    sonnet: env.NVIDIA_MODEL_SONNET || env.NVIDIA_MODEL || 'nvidia/nemotron-3.5-super-vl-120b-a12b',
+    haiku: env.NVIDIA_MODEL_HAIKU || 'nvidia/nemotron-3.5-lightning-30b-a3b',
+  }
+  const maxTotalConcurrent = Number(env.MAX_TOTAL_CONCURRENT ?? 60)
+  if (!Number.isInteger(maxTotalConcurrent) || maxTotalConcurrent < 0) errors.push('MAX_TOTAL_CONCURRENT không hợp lệ (0 = không giới hạn)')
+  const nvidiaFirstByteTimeoutMs = Number(env.NVIDIA_FIRST_BYTE_TIMEOUT_MS ?? 60_000)
+  if (!(nvidiaFirstByteTimeoutMs > 0)) errors.push('NVIDIA_FIRST_BYTE_TIMEOUT_MS không hợp lệ')
+
   if (errors.length) {
     throw new Error('Cấu hình không hợp lệ:\n  - ' + errors.join('\n  - '))
   }
@@ -50,10 +69,16 @@ export function loadConfig(env = process.env, { requireAdminToken = true } = {})
     hedgeAfterMs,
     maxConcurrentPerKey,
     // NVIDIA NIM Direct API configuration
-    nvidiaApiKey: (env.NVIDIA_API_KEY ?? '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').trim(),
+    nvidiaApiKey: nvidiaKeys[0] ?? '',
+    nvidiaApiKeys: nvidiaKeys,
     nvidiaBaseUrl: (env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1').replace(/\/+$/, ''),
-    nvidiaModel: env.NVIDIA_MODEL || 'nvidia/nemotron-3.5-super-vl-120b-a12b',
-    maxNvidiaConcurrent: Number(env.MAX_NVIDIA_CONCURRENT ?? 50), // Số request chạy cùng lúc tối đa trên MỖI key NVIDIA (key chung, hoặc key riêng của từng khách); vượt thì sang revid
+    nvidiaModels,
+    nvidiaModel: nvidiaModels.sonnet,
+    nvidiaVisionModels: list(env.NVIDIA_VISION_MODELS, 'nvidia/nemotron-3.5-super-vl-120b-a12b,nvidia/nemotron-3-nano-omni-30b-a3b-reasoning'),
+    nvidiaFirstByteTimeoutMs,
+    maxTotalConcurrent,
+    // Requests at once per NVIDIA key and model (the shared keys, or one customer's own key); beyond it the next model, then revid.
+    maxNvidiaConcurrent: Number(env.MAX_NVIDIA_CONCURRENT ?? 50),
     nvidiaCreditDiscount: Number(env.NVIDIA_CREDIT_DISCOUNT ?? 0.3), // Giảm 70% chi phí credit khi chạy qua NVIDIA
     // Background poller pings the owner on Telegram when the shared revidapi balance drops below the threshold.
     telegramBotToken: (env.TELEGRAM_BOT_TOKEN ?? '').trim(),

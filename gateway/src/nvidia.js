@@ -28,15 +28,17 @@ export function anthropicToOpenAi(request, targetModel = DEFAULT_NVIDIA_MODEL) {
   // 2. Messages: convert user/assistant/tool messages
   if (Array.isArray(request.messages)) convertMessages(request.messages, messages)
 
-  // 3. Tools conversion
+  // 3. Tools conversion. A tool without input_schema is one Anthropic runs on its own servers (web search, ...):
+  // sent as an empty function the model would call it with no arguments and nobody would answer, so it is left out.
   let tools = undefined
-  if (Array.isArray(request.tools) && request.tools.length > 0) {
-    tools = request.tools.map((t) => ({
+  const usable = Array.isArray(request.tools) ? request.tools.filter((t) => t?.input_schema) : []
+  if (usable.length > 0) {
+    tools = usable.map((t) => ({
       type: 'function',
       function: {
         name: t.name,
         description: t.description || '',
-        parameters: t.input_schema || { type: 'object', properties: {} },
+        parameters: t.input_schema,
       },
     }))
   }
@@ -166,6 +168,27 @@ function convertMessages(src, out) {
       out.push({ role: msg.role, content: text })
     }
   }
+}
+
+/** True when the conversation contains an image anywhere (a pasted picture, or a screenshot returned by a tool). */
+export function hasImages(request) {
+  for (const msg of request?.messages ?? []) {
+    if (!Array.isArray(msg.content)) continue
+    for (const b of msg.content) {
+      if (b?.type === 'image') return true
+      if (b?.type === 'tool_result' && Array.isArray(b.content) && b.content.some((c) => c?.type === 'image')) return true
+    }
+  }
+  return false
+}
+
+/**
+ * True when every tool of the request runs on Anthropic's servers (web search, ...): such a request is
+ * the dedicated call a client makes to use one, and only a provider that really has those tools can answer it.
+ */
+export function onlyServerTools(request) {
+  const tools = request?.tools
+  return Array.isArray(tools) && tools.length > 0 && tools.every((t) => !t?.input_schema)
 }
 
 /** Anthropic tool_choice → OpenAI tool_choice (undefined = leave the provider default). */

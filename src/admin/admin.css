@@ -882,3 +882,10 @@ textarea {
   color: var(--accent);
   font-weight: 500;
 }
+.nv-models {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 2px;
+}

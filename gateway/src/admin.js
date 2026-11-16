@@ -2,6 +2,7 @@ import { safeEqual } from './crypto.js'
 import { readJson, sendJson } from './http.js'
 import { usageData } from './proxy.js'
 import { probeNvidia } from './nvidia.js'
+import { tierModels } from './nvidia-router.js'
 import { sendTelegramMessage } from './telegram.js'
 import { trialTokenCap } from './plans.js'
 
@@ -62,9 +63,20 @@ export async function handleAdmin(req, res, url, { store, quota, config, fetchIm
       source = 'shared'
     }
     if (!apiKey) return sendJson(res, 200, { ok: false, source, error: 'Chưa có key NVIDIA nào (cả key riêng lẫn key chung của hệ thống).' })
-    const r = await probeNvidia({ baseUrl: config.nvidiaBaseUrl, model: config.nvidiaModel, apiKey, fetchImpl })
-    log?.(`${new Date().toISOString()} ${r.ok ? 'INFO' : 'WARN'} nvidia connection test (${source} key): ${r.ok ? `ok in ${r.ms}ms` : r.error}`)
-    return sendJson(res, 200, { source, ...r })
+    // Every model the gateway may use (one per Claude tier, plus the ones that see images), one tiny request each.
+    const models = [...new Set([...Object.values(tierModels(config)), ...(config.nvidiaVisionModels ?? [])].filter(Boolean))]
+    const detail = (await Promise.all(models.map((model) => probeNvidia({ baseUrl: config.nvidiaBaseUrl, model, apiKey, fetchImpl })))).map((r, i) => ({ model: models[i], ...r }))
+    const failed = detail.filter((d) => !d.ok)
+    const short = (m) => m.split('/').pop()
+    const out = { source, ...detail[0], ok: failed.length === 0, models: detail }
+    if (failed.length) {
+      const more = failed.length > 1 ? ` (và ${failed.length - 1} model khác cũng lỗi)` : ''
+      out.error = models.length > 1 ? `${short(failed[0].model)}: ${failed[0].error}${more}` : failed[0].error
+    } else {
+      delete out.error
+    }
+    log?.(`${new Date().toISOString()} ${out.ok ? 'INFO' : 'WARN'} nvidia connection test (${source} key): ${out.ok ? `${models.length} model(s) ok` : `${failed.length}/${models.length} failed, ${out.error}`}`)
+    return sendJson(res, 200, out)
   }
   if (parts[0] === 'config' && parts.length === 1) {
     if (req.method !== 'GET') return sendJson(res, 405, { error: 'Method not allowed' })

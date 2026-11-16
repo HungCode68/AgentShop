@@ -69,9 +69,15 @@ export type UpstreamBalance =
   | { ok: false; error: string }
 
 /** Result of POST /api/admin/nvidia-test; "source" says which key was tested. */
+export interface NvidiaModelTest {
+  model: string
+  ok: boolean
+  ms?: number
+  error?: string
+}
 export type NvidiaTestResult =
-  | { ok: true; source: 'typed' | 'saved' | 'shared'; model: string; ms: number; reply: string }
-  | { ok: false; source?: 'typed' | 'saved' | 'shared'; error: string }
+  | { ok: true; source: 'typed' | 'saved' | 'shared'; model: string; ms: number; reply: string; models?: NvidiaModelTest[] }
+  | { ok: false; source?: 'typed' | 'saved' | 'shared'; error: string; models?: NvidiaModelTest[] }
 
 export class AdminError extends Error {
   constructor(
