@@ -2,7 +2,7 @@ import { safeEqual } from './crypto.js'
 import { readJson, sendJson } from './http.js'
 import { usageData } from './proxy.js'
 import { probeNvidia } from './nvidia.js'
-import { tierModels } from './nvidia-router.js'
+import { allModels } from './nvidia-router.js'
 import { sendTelegramMessage } from './telegram.js'
 import { trialTokenCap } from './plans.js'
 
@@ -63,8 +63,8 @@ export async function handleAdmin(req, res, url, { store, quota, config, fetchIm
       source = 'shared'
     }
     if (!apiKey) return sendJson(res, 200, { ok: false, source, error: 'Chưa có key NVIDIA nào (cả key riêng lẫn key chung của hệ thống).' })
-    // Every model the gateway may use (one per Claude tier, plus the ones that see images), one tiny request each.
-    const models = [...new Set([...Object.values(tierModels(config)), ...(config.nvidiaVisionModels ?? [])].filter(Boolean))]
+    // Every model the gateway may use (all the chains), one tiny request each.
+    const models = allModels(config)
     const detail = (await Promise.all(models.map((model) => probeNvidia({ baseUrl: config.nvidiaBaseUrl, model, apiKey, fetchImpl })))).map((r, i) => ({ model: models[i], ...r }))
     const failed = detail.filter((d) => !d.ok)
     const short = (m) => m.split('/').pop()

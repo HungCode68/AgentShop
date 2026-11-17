@@ -1551,43 +1551,85 @@ describe('NVIDIA route: Claude Code side requests', () => {
     )
   })
 
-  describe('several NVIDIA models, chosen by task', () => {
-    const tiers = { nvidiaModels: { opus: 'm-ultra', sonnet: 'm-super', haiku: 'm-light' }, nvidiaVisionModels: ['m-super', 'm-omni'] }
+  describe('several NVIDIA models, chosen by the task', () => {
+    const chains = { nvidiaChains: { chat: ['m-fast', 'm-fast2', 'm-super'], agent: ['m-ultra', 'm-super', 'm-fast'], vision: ['m-super', 'm-omni'] } }
+    const chatAsk = { messages: [{ role: 'user', content: 'Thủ đô của Nhật Bản là gì?' }] }
+    const codeAsk = { messages: [{ role: 'user', content: 'Viết hàm Python cộng hai số' }] }
+    const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }
+    const imageAsk = { messages: [{ role: 'user', content: [{ type: 'text', text: 'what is this?' }, image] }] }
     const customTool = { name: 'Bash', description: 'run a command', input_schema: { type: 'object', properties: { command: { type: 'string' } } } }
     const models = (seen) => seen.map((b) => b.model)
 
-    test('the Claude model the customer picks decides the NVIDIA model', async () => {
+    test('the task decides the model: chat is fast, code is strong, an image goes to a model that sees', async () => {
       const { key } = planKey()
       await withNvidia(
         async (gwBase, lines, seen) => {
           const served = []
-          for (const model of ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']) {
-            const r = await ask(gwBase, key, { model })
+          for (const ask1 of [chatAsk, codeAsk, imageAsk]) {
+            const r = await ask(gwBase, key, ask1)
             await r.text()
-            served.push(r.headers.get('x-served-by'))
+            served.push([r.headers.get('x-served-by'), r.headers.get('x-task')])
           }
-          assert.deepEqual(models(seen), ['m-light', 'm-super', 'm-ultra'])
-          assert.deepEqual(served, ['m-light', 'm-super', 'm-ultra'], 'the answer says which model served it')
+          assert.deepEqual(models(seen), ['m-fast', 'm-ultra', 'm-super'])
+          assert.deepEqual(served, [['m-fast', 'chat'], ['m-ultra', 'agent'], ['m-super', 'vision']], 'the answer says which model and why')
           assert.equal(received.length, 0)
         },
-        { extra: tiers },
+        { extra: chains },
       )
     })
 
-    test('a rate-limited model rests: the next NVIDIA model serves, and later requests go straight to it', async () => {
+    test('the Claude model the customer picked does not matter, only the task', async () => {
       const { key } = planKey()
       await withNvidia(
         async (gwBase, lines, seen) => {
-          const a = await ask(gwBase, key, { model: 'claude-opus-5-5' })
+          for (const model of ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']) await (await ask(gwBase, key, { model, ...chatAsk })).text()
+          assert.deepEqual(models(seen), ['m-fast', 'm-fast', 'm-fast'])
+        },
+        { extra: chains },
+      )
+    })
+
+    test('a conversation that uses tools goes to the strong models, even for a short message', async () => {
+      const { key } = planKey()
+      await withNvidia(
+        async (gwBase, lines, seen) => {
+          const messages = [
+            { role: 'user', content: 'xin chào' },
+            { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } }] },
+            { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'a.txt' }] },
+          ]
+          await (await ask(gwBase, key, { messages, tools: [customTool] })).text()
+          assert.deepEqual(models(seen), ['m-ultra'])
+        },
+        { extra: chains },
+      )
+    })
+
+    test('with task routing off everything goes to the strong models', async () => {
+      const { key } = planKey()
+      await withNvidia(
+        async (gwBase, lines, seen) => {
+          await (await ask(gwBase, key, chatAsk)).text()
+          assert.deepEqual(models(seen), ['m-ultra'])
+        },
+        { extra: { ...chains, nvidiaTaskRouting: false } },
+      )
+    })
+
+    test('a rate-limited model rests: the next one of the chain serves, and later requests go straight to it', async () => {
+      const { key } = planKey()
+      await withNvidia(
+        async (gwBase, lines, seen) => {
+          const a = await ask(gwBase, key, codeAsk)
           await a.text()
           assert.equal(a.status, 200)
           assert.deepEqual(models(seen), ['m-ultra', 'm-super'], 'ultra said 429, super served')
-          await (await ask(gwBase, key, { model: 'claude-opus-5-5' })).text()
+          await (await ask(gwBase, key, codeAsk)).text()
           assert.deepEqual(models(seen), ['m-ultra', 'm-super', 'm-super'], 'ultra is resting: no new attempt on it')
           assert.equal(received.length, 0, 'revid was never needed')
           assert.ok(lines.some((l) => l.includes('m-ultra') && l.includes('429') && /resting/.test(l)), lines.join('\n'))
         },
-        { extra: tiers, decide: ({ body }) => (body.model === 'm-ultra' ? { status: 429, body: { error: { message: 'slow down' } } } : null) },
+        { extra: chains, decide: ({ body }) => (body.model === 'm-ultra' ? { status: 429, body: { error: { message: 'slow down' } } } : null) },
       )
     })
 
@@ -1595,16 +1637,16 @@ describe('NVIDIA route: Claude Code side requests', () => {
       const { key } = planKey()
       await withNvidia(
         async (gwBase, lines, seen) => {
-          const a = await ask(gwBase, key, { model: 'claude-opus-5-5' })
+          const a = await ask(gwBase, key, codeAsk)
           await a.text()
           assert.equal(a.status, 200)
-          assert.deepEqual(models(seen), ['m-ultra', 'm-super', 'm-light'])
+          assert.deepEqual(models(seen), ['m-ultra', 'm-super', 'm-fast'])
           assert.equal(received.length, 1, 'revid answered')
-          await (await ask(gwBase, key, { model: 'claude-opus-5-5' })).text()
+          await (await ask(gwBase, key, codeAsk)).text()
           assert.equal(seen.length, 3, 'all three are resting: straight to revid')
           assert.equal(received.length, 2)
         },
-        { extra: tiers, decide: () => ({ status: 429 }) },
+        { extra: chains, decide: () => ({ status: 429 }) },
       )
     })
 
@@ -1613,26 +1655,14 @@ describe('NVIDIA route: Claude Code side requests', () => {
       await withNvidia(
         async (gwBase, lines, seen) => {
           const t0 = Date.now()
-          const res = await ask(gwBase, key, { model: 'claude-opus-5-5' })
+          const res = await ask(gwBase, key, codeAsk)
           await res.text()
           assert.equal(res.status, 200)
           assert.deepEqual(models(seen), ['m-ultra', 'm-super'])
           assert.ok(Date.now() - t0 < 3000, 'did not wait for the hung model')
           assert.equal(received.length, 0)
         },
-        { extra: { ...tiers, nvidiaFirstByteTimeoutMs: 150 }, decide: ({ body }) => (body.model === 'm-ultra' ? { hang: true } : null) },
-      )
-    })
-
-    test('a request with an image goes to a model that sees images', async () => {
-      const { key } = planKey()
-      const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }
-      await withNvidia(
-        async (gwBase, lines, seen) => {
-          await (await ask(gwBase, key, { model: 'claude-opus-5-5', messages: [{ role: 'user', content: [{ type: 'text', text: 'what is this?' }, image] }] })).text()
-          assert.deepEqual(models(seen), ['m-super'], 'opus would be m-ultra, which cannot see')
-        },
-        { extra: tiers },
+        { extra: { ...chains, nvidiaFirstByteTimeoutMs: 150 }, decide: ({ body }) => (body.model === 'm-ultra' ? { hang: true } : null) },
       )
     })
 
@@ -1646,7 +1676,7 @@ describe('NVIDIA route: Claude Code side requests', () => {
           await (await ask(gwBase, key, { tools: [customTool, { type: 'web_search_20250305', name: 'web_search' }] })).text()
           assert.deepEqual(seen[0].tools.map((t) => t.function.name), ['Bash'])
         },
-        { extra: tiers },
+        { extra: chains },
       )
     })
 
@@ -1751,20 +1781,20 @@ describe('NVIDIA route: Claude Code side requests', () => {
     })
 
     test('with several models it tests each one and says which fail', async () => {
-      const tiers = { nvidiaModels: { opus: 'm-ultra', sonnet: 'm-super', haiku: 'm-light' }, nvidiaVisionModels: ['m-super', 'm-omni'] }
+      const chains = { nvidiaChains: { chat: ['m-fast', 'm-super'], agent: ['m-ultra', 'm-super'], vision: ['m-super', 'm-omni'] } }
       await withNvidia(
         async (gwBase, lines, seen) => {
           const r = await post(gwBase, { key: 'nvapi-typed-key-0000000' })
           assert.equal(r.ok, false, 'one model failing makes the whole test fail')
           assert.deepEqual(
             r.models.map((m) => [m.model, m.ok]),
-            [['m-ultra', true], ['m-super', true], ['m-light', false], ['m-omni', true]],
+            [['m-fast', false], ['m-super', true], ['m-ultra', true], ['m-omni', true]],
           )
-          assert.match(r.error, /m-light.*giới hạn tốc độ/)
+          assert.match(r.error, /m-fast.*giới hạn tốc độ/)
           assert.equal(seen.length, 4, 'one tiny request per distinct model')
           assert.ok(!JSON.stringify(r).includes('nvapi-'))
         },
-        { extra: tiers, decide: ({ body }) => (body.model === 'm-light' ? { status: 429 } : null) },
+        { extra: chains, decide: ({ body }) => (body.model === 'm-fast' ? { status: 429 } : null) },
       )
     })
 

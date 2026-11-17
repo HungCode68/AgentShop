@@ -41,13 +41,27 @@ export function loadConfig(env = process.env, { requireAdminToken = true } = {})
     const single = (env.NVIDIA_API_KEY ?? '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').trim()
     return single ? [single] : []
   })()
-  // One NVIDIA model per Claude tier (each model has its own rate limit at NVIDIA); NVIDIA_MODEL is the Sonnet one.
-  const list = (v, fallback) => (v ?? fallback).split(',').map((x) => x.trim()).filter(Boolean)
-  const nvidiaModels = {
-    opus: env.NVIDIA_MODEL_OPUS || 'nvidia/nemotron-3-ultra-550b-a55b',
-    sonnet: env.NVIDIA_MODEL_SONNET || env.NVIDIA_MODEL || 'nvidia/nemotron-3.5-super-vl-120b-a12b',
-    haiku: env.NVIDIA_MODEL_HAIKU || 'nvidia/nemotron-3.5-lightning-30b-a3b',
+  // The task decides the NVIDIA model: a chain per kind of task, best first (each model has its own rate limit at NVIDIA,
+  // so when one rests the next one answers). chat = everyday questions, fast; agent = code, tools, analysis, strong;
+  // vision = the conversation has an image, models that can see.
+  const list = (v, fallback) => {
+    const items = (v || fallback).split(',').map((x) => x.trim()).filter(Boolean)
+    return items.length ? items : fallback.split(',')
   }
+  const ULTRA = 'nvidia/nemotron-3-ultra-550b-a55b'
+  const SUPER_VL = 'nvidia/nemotron-3.5-super-vl-120b-a12b'
+  const OMNI = 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning'
+  const LIGHTNING = 'nvidia/nemotron-3.5-lightning-30b-a3b'
+  const nvidiaChains = {
+    chat: list(env.NVIDIA_CHAT_MODELS, [OMNI, LIGHTNING, SUPER_VL, ULTRA].join(',')),
+    agent: list(env.NVIDIA_AGENT_MODELS, [ULTRA, SUPER_VL, OMNI, LIGHTNING].join(',')),
+    vision: list(env.NVIDIA_VISION_MODELS, [SUPER_VL, OMNI].join(',')),
+  }
+  // NVIDIA_TASK_ROUTING=off sends everything (except images) to the agent chain, the strongest models.
+  const nvidiaTaskRouting = !/^(off|false|0|no)$/i.test((env.NVIDIA_TASK_ROUTING ?? '').trim())
+  // A conversation at least this long (estimated tokens) goes to the strong models.
+  const nvidiaLongContextTokens = Number(env.NVIDIA_LONG_CONTEXT_TOKENS ?? 20_000)
+  if (!(nvidiaLongContextTokens > 0)) errors.push('NVIDIA_LONG_CONTEXT_TOKENS không hợp lệ')
   const maxTotalConcurrent = Number(env.MAX_TOTAL_CONCURRENT ?? 60)
   if (!Number.isInteger(maxTotalConcurrent) || maxTotalConcurrent < 0) errors.push('MAX_TOTAL_CONCURRENT không hợp lệ (0 = không giới hạn)')
   const nvidiaFirstByteTimeoutMs = Number(env.NVIDIA_FIRST_BYTE_TIMEOUT_MS ?? 60_000)
@@ -72,9 +86,10 @@ export function loadConfig(env = process.env, { requireAdminToken = true } = {})
     nvidiaApiKey: nvidiaKeys[0] ?? '',
     nvidiaApiKeys: nvidiaKeys,
     nvidiaBaseUrl: (env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1').replace(/\/+$/, ''),
-    nvidiaModels,
-    nvidiaModel: nvidiaModels.sonnet,
-    nvidiaVisionModels: list(env.NVIDIA_VISION_MODELS, 'nvidia/nemotron-3.5-super-vl-120b-a12b,nvidia/nemotron-3-nano-omni-30b-a3b-reasoning'),
+    nvidiaChains,
+    nvidiaModel: nvidiaChains.agent[0], // the single main model (older code and tests read this)
+    nvidiaTaskRouting,
+    nvidiaLongContextTokens,
     nvidiaFirstByteTimeoutMs,
     maxTotalConcurrent,
     // Requests at once per NVIDIA key and model (the shared keys, or one customer's own key); beyond it the next model, then revid.

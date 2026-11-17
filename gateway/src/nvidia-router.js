@@ -1,36 +1,100 @@
 /**
  * Which NVIDIA model answers a request, on which key, and what happens when one is rate limited or down.
  *
- * - The Claude model the customer picked chooses the NVIDIA model: Opus → the biggest, Sonnet → the
- *   balanced one, Haiku → the fast one. Requests with images only go to models that see images.
- * - Each model has its own rate limit at NVIDIA, so when the right model is busy or resting the request
+ * - The task decides the model, not the Claude model the customer picked: everyday questions go to the fast
+ *   models, anything with an image to the models that can see, and code, agent work (tools, commands, tests)
+ *   and heavy analysis to the strong ones. Each kind of task has its own chain of models, best first.
+ * - Each model has its own rate limit at NVIDIA, so when the best model is busy or resting the request
  *   moves on to the next model of its chain (and to the next key of the pool) instead of waiting for revid,
  *   which costs full price.
  * - A model or key that fails rests for a while (longer after each repeated failure), so the next requests
  *   do not queue up behind it.
  * Pure bookkeeping, no network: proxy.js does the calling.
  */
+import { hasImages } from './nvidia.js'
 
-export const tierOf = (claudeModel) => (/opus/i.test(claudeModel) ? 'opus' : /haiku/i.test(claudeModel) ? 'haiku' : 'sonnet')
+/* ------------------------------------------------------------------ what kind of task is it? */
 
-/** The NVIDIA model of each Claude tier; the single `nvidiaModel` fills in for tiers that are not configured. */
-export function tierModels(config) {
-  const m = config.nvidiaModels ?? {}
-  return { opus: m.opus || config.nvidiaModel, sonnet: m.sonnet || config.nvidiaModel, haiku: m.haiku || config.nvidiaModel }
+/** Claude Code adds reminders and IDE notes to the customer's message; they are not what the customer asked. */
+const NOISE_TAGS = /<(system-reminder|ide_[a-z_]+|command-[a-z-]+|local-command-[a-z-]+)>[\s\S]*?<\/\1>/g
+
+/** Lowercase, no accents ("Viết hàm" and "viet ham" read the same). */
+const plain = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd')
+
+/**
+ * Words that mean a programming, technical or analysis request (English, and Vietnamese without accents).
+ * Meant to be a little eager: a casual chat that lands on the strong model only costs some speed, a code
+ * task that lands on the fast one costs quality.
+ */
+const TECH_WORDS = [
+  'code', 'coding', 'function', 'class', 'method', 'variable', 'bug', 'bugs', 'debug', 'error', 'exception', 'stack trace', 'traceback',
+  'compile', 'compiler', 'refactor', 'implement', 'algorithm', 'regex', 'sql', 'database', 'query', 'script', 'api', 'endpoint', 'deploy',
+  'docker', 'kubernetes', 'git', 'commit', 'unit test', 'test', 'tests', 'typescript', 'javascript', 'python', 'java', 'golang', 'rust',
+  'html', 'css', 'react', 'npm', 'pip', 'terminal', 'shell', 'bash', 'powershell', 'backend', 'frontend', 'json', 'yaml', 'http', 'ssh',
+  'linux', 'repository', 'analyze', 'analyse', 'analysis', 'architecture',
+  // Working on the customer's machine or project: files, folders, a repository, the browser
+  'file', 'folder', 'directory', 'project', 'repo', 'pull request', 'readme', 'framework', 'library', 'browser', 'chrome',
+  'viet code', 'lap trinh', 'viet ham', 'sua loi', 'bi loi', 'bao loi', 'thuat toan', 'chay lenh', 'cau lenh', 'cai dat', 'trien khai',
+  'toi uu', 'kiem thu', 'viet test', 'phan tich', 'kien truc', 'co so du lieu', 'ma nguon', 'doan ma',
+  'du an', 'thu muc', 'tep tin', 'trinh duyet', 'tao file', 'xoa file', 'doc file', 'ghi file',
+]
+const TECH_RE = new RegExp(`(?:^|[^a-z0-9])(?:${TECH_WORDS.map((w) => w.replace(/ /g, '\\s+')).join('|')})(?![a-z0-9])`)
+/** A fenced block of code, a stack trace, or the name of a source file. */
+const CODE_SHAPE_RE = /```|\n\s+at\s.+\(.+:\d+:\d+\)|\b[\w-]+\.(?:py|js|ts|tsx|jsx|java|go|rs|cpp|cs|php|rb|sql|sh|ya?ml)\b/i
+
+/** The customer's latest message, as plain text without the client's own notes. */
+function latestAsk(messages) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m?.role !== 'user') continue
+    const blocks = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : Array.isArray(m.content) ? m.content : []
+    const text = blocks
+      .filter((b) => b?.type === 'text')
+      .map((b) => String(b.text ?? '').replace(NOISE_TAGS, ''))
+      .join('\n')
+      .trim()
+    if (text) return text.slice(0, 20_000)
+  }
+  return ''
 }
 
-/** Which tier to fall back to, closest first. */
-const CLOSEST = { opus: ['opus', 'sonnet', 'haiku'], sonnet: ['sonnet', 'opus', 'haiku'], haiku: ['haiku', 'sonnet', 'opus'] }
+const usedTools = (messages) => messages.some((m) => Array.isArray(m?.content) && m.content.some((b) => b?.type === 'tool_use' || b?.type === 'tool_result'))
 
-/** The models to try for a request, best first, without repeats. */
-export function modelChain(config, claudeModel, hasImages) {
-  const tiers = tierModels(config)
-  const chain = [...new Set(CLOSEST[tierOf(claudeModel)].map((t) => tiers[t]).filter(Boolean))]
-  if (!hasImages) return chain
-  // Only models that see images; the tier's own model first when it is one of them.
-  const vision = config.nvidiaVisionModels?.length ? config.nvidiaVisionModels : chain
-  return [...vision].sort((a, b) => Number(b === chain[0]) - Number(a === chain[0]))
+/**
+ * What kind of task a request is, from the request alone (no extra model call, so no extra delay or cost).
+ * @returns {{kind: 'chat' | 'agent' | 'vision', reason: string}}
+ *   chat = everyday question, fast models · agent = code, tools, analysis, long or careful work, strong models ·
+ *   vision = there is an image in the conversation, models that can see
+ */
+export function classifyTask(request, { inputEstimate = 0, longContextTokens = 20_000, routing = true } = {}) {
+  if (hasImages(request)) return { kind: 'vision', reason: 'image in the conversation' }
+  if (!routing) return { kind: 'agent', reason: 'task routing is off' }
+  if (request.thinking?.type === 'enabled' || request.thinking?.type === 'adaptive') return { kind: 'agent', reason: 'extended thinking' }
+  if (request.tool_choice?.type === 'tool' || request.tool_choice?.type === 'any' || request.output_config?.format || request.output_format) {
+    return { kind: 'agent', reason: 'forced tool or structured output' }
+  }
+  const messages = Array.isArray(request.messages) ? request.messages : []
+  if (usedTools(messages)) return { kind: 'agent', reason: 'tools used in this conversation' }
+  if (inputEstimate >= longContextTokens) return { kind: 'agent', reason: 'long conversation' }
+  const ask = latestAsk(messages)
+  if (CODE_SHAPE_RE.test(ask) || TECH_RE.test(plain(ask))) return { kind: 'agent', reason: 'code or technical request' }
+  return { kind: 'chat', reason: 'plain chat' }
 }
+
+/* ------------------------------------------------------------------ which models, in which order */
+
+/** The models to try for a kind of task, best first, without repeats. Falls back to the single nvidiaModel. */
+export function modelChain(config, kind) {
+  const chain = config.nvidiaChains?.[kind]
+  return [...new Set((chain?.length ? chain : [config.nvidiaModel]).filter(Boolean))]
+}
+
+/** Every model the gateway may use, once (for the connection test). */
+export function allModels(config) {
+  return [...new Set(['chat', 'agent', 'vision'].flatMap((k) => modelChain(config, k)))]
+}
+
+/* ------------------------------------------------------------------ when a model fails */
 
 /** rate = 429; server = 5xx or no answer at all (0); auth = the key is rejected; request = this request is the problem. */
 export function failureKind(status) {

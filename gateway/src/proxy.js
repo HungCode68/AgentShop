@@ -3,8 +3,8 @@ import { ALLOWED_MODELS, convertedTokens, creditsForUsage, MODEL_RATES, normaliz
 import { estimateRequestCredits } from './quota.js'
 import { fillInputTokens, looksTruncated, relayMessageStream } from './sse.js'
 import { estimateInputTokens } from './tokens.js'
-import { anthropicToOpenAi, hasImages, onlyServerTools, openAiToAnthropic, relayOpenAiStreamToAnthropic, requestShape } from './nvidia.js'
-import { modelChain, NvidiaRouter, parseRetryAfter } from './nvidia-router.js'
+import { anthropicToOpenAi, onlyServerTools, openAiToAnthropic, relayOpenAiStreamToAnthropic, requestShape } from './nvidia.js'
+import { classifyTask, modelChain, NvidiaRouter, parseRetryAfter } from './nvidia-router.js'
 
 /** Why a client key was rejected → [HTTP status, Anthropic error type, message]. */
 const REJECTIONS = {
@@ -455,10 +455,14 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
 
   let upstream
 
-  // Which NVIDIA models and keys may serve this request, and in which order. The Claude model the customer
-  // picked chooses the model (Claude Code's own side requests use Haiku, so they land on the fast one).
+  // Which NVIDIA models and keys may serve this request, and in which order. The task decides the model
+  // (not the Claude model the customer picked): everyday questions go to the fast models, code and agent work
+  // to the strong ones, anything with an image to the models that can see.
   const gw = stateOf(config)
   const wantsNvidia = route === 'messages' && !onlyServerTools(request)
+  const task = wantsNvidia
+    ? classifyTask(request, { inputEstimate: inputEstimate ?? 0, longContextTokens: config.nvidiaLongContextTokens, routing: config.nvidiaTaskRouting !== false })
+    : null
   if (route === 'messages' && !wantsNvidia) {
     log?.(`${new Date().toISOString()} INFO ${label} [nvidia] skipped: the request only asks for tools that run on Anthropic's servers (${request.tools.map((t) => t.type ?? t.name).join(', ')}), sent to revid`)
   }
@@ -507,6 +511,7 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
           'cache-control': 'no-cache',
           'connection': 'keep-alive',
           'x-served-by': attempt.model,
+          'x-task': task.kind,
         })
         try {
           await relayOpenAiStreamToAnthropic(nChunks, res, {
@@ -528,7 +533,7 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
       charge(anthropicRes.usage)
       releaseReservation()
       release()
-      sendJson(res, 200, anthropicRes, { 'x-served-by': attempt.model })
+      sendJson(res, 200, anthropicRes, { 'x-served-by': attempt.model, 'x-task': task.kind })
       return true
     } catch (err) {
       attempt.release()
@@ -547,7 +552,7 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
         return true
       }
       const { waitMs } = gw.router.failure(attempt, { status: err.status ?? 0, retryAfterMs: err.retryAfterMs })
-      warn(log, `${label} NVIDIA failover: ${where} failed (${describeError(err)})${waitMs ? `, resting ${Math.round(waitMs / 1000)}s` : ''}${attempt.lane.id.startsWith('own:') ? ' [customer own NVIDIA key]' : ''}`)
+      warn(log, `${label} NVIDIA failover: ${where} failed [${task.kind}: ${task.reason}] (${describeError(err)})${waitMs ? `, resting ${Math.round(waitMs / 1000)}s` : ''}${attempt.lane.id.startsWith('own:') ? ' [customer own NVIDIA key]' : ''}`)
       return false
     }
   }
@@ -561,7 +566,7 @@ export async function handleAiProxy(req, res, url, { store, quota, config, fetch
       warn(log, `${label} could not read the customer's own NVIDIA key, using the shared ones: ${err?.message ?? err}`)
     }
     const lanes = ownKey ? [{ id: `own:${record.id}`, key: ownKey }] : gw.router.rotate(sharedLanes(config))
-    const chain = modelChain(config, request.model, hasImages(request))
+    const chain = modelChain(config, task.kind)
     if (lanes.length && chain.length) {
       // Chat turns stream; anything else (non-streamed, forced tool, JSON output) is a Claude Code side request
       // such as auto mode's safety check. Log its shape (never its content) so one that misbehaves can be identified.

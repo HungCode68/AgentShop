@@ -23,12 +23,14 @@ services:
       # NVIDIA NIM Direct API Integration (Không phụ thuộc vào free-claude-code)
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-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}
       NVIDIA_BASE_URL: ${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
-      # Một model NVIDIA cho mỗi model Claude khách chọn (mỗi model có giới hạn tốc độ riêng): NVIDIA_MODEL là của Sonnet.
-      NVIDIA_MODEL: ${NVIDIA_MODEL:-nvidia/nemotron-3.5-super-vl-120b-a12b}
-      NVIDIA_MODEL_OPUS: ${NVIDIA_MODEL_OPUS:-nvidia/nemotron-3-ultra-550b-a55b}
-      NVIDIA_MODEL_HAIKU: ${NVIDIA_MODEL_HAIKU:-nvidia/nemotron-3.5-lightning-30b-a3b}
-      # Request có ảnh chỉ đi qua các model nhìn được ảnh (thử lần lượt).
+      # Model NVIDIA chọn theo TÁC VỤ, mỗi loại là một danh sách thử lần lượt (mỗi model có giới hạn tốc độ riêng, model nghẽn thì chuyển sang model kế):
+      #   chat = hỏi đáp thường (nhanh) · agent = code, chạy lệnh/tool, phân tích (mạnh) · vision = có ảnh (model nhìn được ảnh)
+      NVIDIA_CHAT_MODELS: ${NVIDIA_CHAT_MODELS:-nvidia/nemotron-3-nano-omni-30b-a3b-reasoning,nvidia/nemotron-3.5-lightning-30b-a3b,nvidia/nemotron-3.5-super-vl-120b-a12b,nvidia/nemotron-3-ultra-550b-a55b}
+      NVIDIA_AGENT_MODELS: ${NVIDIA_AGENT_MODELS:-nvidia/nemotron-3-ultra-550b-a55b,nvidia/nemotron-3.5-super-vl-120b-a12b,nvidia/nemotron-3-nano-omni-30b-a3b-reasoning,nvidia/nemotron-3.5-lightning-30b-a3b}
       NVIDIA_VISION_MODELS: ${NVIDIA_VISION_MODELS:-nvidia/nemotron-3.5-super-vl-120b-a12b,nvidia/nemotron-3-nano-omni-30b-a3b-reasoning}
+      # off = mọi request (trừ có ảnh) đi qua danh sách agent (model mạnh nhất). Hội thoại dài từ ngần này token (ước lượng) cũng đi qua danh sách agent.
+      NVIDIA_TASK_ROUTING: ${NVIDIA_TASK_ROUTING:-on}
+      NVIDIA_LONG_CONTEXT_TOKENS: ${NVIDIA_LONG_CONTEXT_TOKENS:-20000}
       # Nhiều key dùng chung, cách nhau bằng dấu phẩy: xoay vòng (để trống thì dùng NVIDIA_API_KEY).
       NVIDIA_API_KEYS: ${NVIDIA_API_KEYS:-}
       NVIDIA_FIRST_BYTE_TIMEOUT_MS: ${NVIDIA_FIRST_BYTE_TIMEOUT_MS:-60000}
