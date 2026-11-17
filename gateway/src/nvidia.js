@@ -249,7 +249,7 @@ export function openAiToAnthropic(openAiRes, requestedModel) {
   if (msg.content) {
     content.push({
       type: 'text',
-      text: msg.content,
+      text: withoutRules(String(msg.content)),
     })
   }
 
@@ -337,3 +337,10 @@ export async function probeNvidia({ baseUrl, model, apiKey, fetchImpl = fetch, t
 }
 
 export { relayOpenAiStreamToAnthropic } from './nvidia-stream.js'
+import { makeRuleFilter } from './nvidia-stream.js'
+
+/** A whole answer without its horizontal-rule lines ("---"). */
+const withoutRules = (text) => {
+  const f = makeRuleFilter()
+  return f.push(text) + f.flush()
+}

@@ -17,7 +17,60 @@
 /** Output tokens are counted per streamed delta when the provider reports no usage. */
 const COUNTED_TOKENS_PER_DELTA = 1
 
-const stopReasonOf = (finishReason, sawToolUse) => {
+/**
+ * Drops lines that are only a horizontal rule ("---") from streamed text; the NVIDIA models put them between
+ * every section. Code blocks are left alone. Text may arrive in pieces of any size, so a line that could still
+ * turn out to be a rule is held back until it is known.
+ */
+export function makeRuleFilter() {
+  let pending = '' // start of the current line while it is only dashes and spaces
+  let pass = false // the current line is already known not to be a rule
+  let head = '' // first characters of the current line, to notice code fences
+  let fence = false
+  const isRule = (s) => /^ {0,3}-{3,}[ \t]*$/.test(s)
+  const endLine = () => {
+    if (head.startsWith('```')) fence = !fence
+    head = ''
+  }
+  return {
+    push(text) {
+      let out = ''
+      for (const ch of text) {
+        if (!pass) {
+          if (ch === '-' || ch === ' ') {
+            pending += ch
+            continue
+          }
+          if (ch === '\n') {
+            if (fence || !isRule(pending)) out += `${pending}\n`
+            pending = ''
+            head = ''
+            continue
+          }
+          out += pending
+          head = pending.trimStart()
+          pending = ''
+          pass = true
+        }
+        out += ch
+        if (head.length < 3) head += ch
+        if (ch === '\n') {
+          endLine()
+          pass = false
+        }
+      }
+      return out
+    },
+    /** The end of the text: whatever is still held back. */
+    flush() {
+      const rest = !fence && isRule(pending) ? '' : pending
+      pending = ''
+      return rest
+    },
+  }
+}
+
+const stopReasonOf =(finishReason, sawToolUse) => {
   if (finishReason === 'length') return 'max_tokens'
   return sawToolUse ? 'tool_use' : 'end_turn'
 }
@@ -45,12 +98,17 @@ export async function relayOpenAiStreamToAnthropic(openAiChunks, res, { requeste
   let reportedInput // from the provider's usage, undefined until it reports
   let reportedOutput
   let countedOutput = 0
+  let rules = makeRuleFilter()
 
   const send = (event, data) => {
     if (!res.destroyed) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
   }
   const closeBlock = () => {
     if (blockType === null) return
+    if (blockType === 'text') {
+      const rest = rules.flush()
+      if (rest) blockDelta({ type: 'text_delta', text: rest })
+    }
     send('content_block_stop', { type: 'content_block_stop', index: blockIndex })
     blockType = null
     blockIndex++
@@ -125,8 +183,12 @@ export async function relayOpenAiStreamToAnthropic(openAiChunks, res, { requeste
       countedOutput += COUNTED_TOKENS_PER_DELTA
     }
     if (delta.content) {
-      if (blockType !== 'text') openBlock('text', { type: 'text', text: '' })
-      blockDelta({ type: 'text_delta', text: delta.content })
+      if (blockType !== 'text') {
+        rules = makeRuleFilter()
+        openBlock('text', { type: 'text', text: '' })
+      }
+      const shown = rules.push(delta.content)
+      if (shown) blockDelta({ type: 'text_delta', text: shown })
       countedOutput += COUNTED_TOKENS_PER_DELTA
     }
     if (Array.isArray(delta.tool_calls)) for (const tc of delta.tool_calls) handleToolCall(tc)
